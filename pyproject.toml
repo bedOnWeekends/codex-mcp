@@ -3,13 +3,27 @@ requires = ["setuptools>=70"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "codex-orchestrator"
-version = "0.2.0"
+name = "codex-mcp"
+version = "0.3.1"
 requires-python = ">=3.12"
+dependencies = [
+  "alembic>=1.13",
+  "asyncpg>=0.29",
+  "mcp>=1.29",
+  "openai-codex>=0.144.4",
+  "psycopg[binary]>=3.2,<4",
+  "pydantic>=2.8",
+  "pydantic-settings>=2.4",
+  "sqlalchemy>=2.0",
+  "structlog>=24.0",
+  "typer>=0.12",
+  "uvicorn>=0.30",
+]
 
 [project.scripts]
 orchestrator-server = "orchestrator.main:run"
 orchestrator-admin = "orchestrator.admin:app"
+orchestrator-worker = "orchestrator.worker:run"
 
 [tool.setuptools.packages.find]
 where = ["src"]
@@ -21,6 +35,7 @@ asyncio_mode = "auto"
 markers = [
   "mcp: tests requiring the MCP Python SDK",
 ]
+addopts = "--basetemp=.pytest_tmp"
 
 [tool.ruff]
 target-version = "py312"
@@ -33,3 +48,5 @@ select = ["E", "F", "I", "B", "UP", "ASYNC"]
 pythonVersion = "3.12"
 typeCheckingMode = "strict"
 include = ["src", "tests"]
+
+

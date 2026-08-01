@@ -3,25 +3,17 @@ services:
     image: postgres:18
     container_name: codex-orchestrator-postgres
     restart: unless-stopped
-
     environment:
+      POSTGRES_DB: orchestrator
       POSTGRES_USER: orchestrator
       POSTGRES_PASSWORD: orchestrator
-      POSTGRES_DB: orchestrator
       PGDATA: /var/lib/postgresql/18/docker
-
     ports:
       - "5433:5432"
-
     volumes:
       - postgres_data:/var/lib/postgresql
-
     healthcheck:
-      test:
-        [
-          "CMD-SHELL",
-          "pg_isready -U orchestrator -d orchestrator"
-        ]
+      test: ["CMD-SHELL", "pg_isready -U orchestrator -d orchestrator"]
       interval: 5s
       timeout: 5s
       retries: 12

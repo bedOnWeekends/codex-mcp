@@ -42,5 +42,15 @@ async def test_tools_publish_structured_output_and_annotations() -> None:
     assert tools["create_run"].outputSchema is not None
 
     result = await mcp.call_tool("list_repositories", {})
-    assert isinstance(result, dict)
-    assert result["repositories"][0]["name"] == "toss-trader"
+
+    assert isinstance(result, tuple)
+    content, structured_content = result
+
+    assert isinstance(content, list)
+    assert isinstance(structured_content, dict)
+
+    repositories = structured_content["repositories"]
+
+    assert len(repositories) == 1
+    assert repositories[0]["name"] == "toss-trader"
+    assert repositories[0]["default_branch"] == "main"

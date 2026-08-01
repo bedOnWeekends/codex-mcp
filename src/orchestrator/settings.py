@@ -32,7 +32,7 @@ class Settings(BaseSettings):
     database_url: str = Field(
         default=(
             "postgresql+asyncpg://orchestrator:orchestrator@"
-            "localhost:5432/orchestrator"
+            "127.0.0.1:5433/orchestrator"
         ),
         repr=False,
     )
@@ -49,6 +49,14 @@ class Settings(BaseSettings):
     max_parallel_workers: int = Field(default=3, ge=1, le=16)
     max_attempts_per_task: int = Field(default=2, ge=1, le=10)
     max_replans: int = Field(default=1, ge=0, le=5)
+
+    worker_poll_interval_seconds: float = Field(default=1.0, gt=0, le=60)
+    worker_id: str = "local-worker"
+    codex_model_cheap: str | None = None
+    codex_model_default: str | None = None
+    codex_model_critical: str | None = None
+    codex_approval_policy: str = "never"
+    codex_sandbox_mode: str = "read-only"
 
     @field_validator("database_url")
     @classmethod

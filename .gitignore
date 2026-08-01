@@ -10,3 +10,4 @@ runtime/
 coverage.xml
 .coverage
 htmlcov/
+.pytest_tmp/

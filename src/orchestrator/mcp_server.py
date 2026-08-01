@@ -20,7 +20,7 @@ SERVER_INSTRUCTIONS = """
 Use list_repositories before create_run. create_run only accepts repositories that
 were registered locally by an administrator and queues a planning task. Use get_run
 to read the authoritative status and version. cancel_run requires the latest version.
-Phase 2 persists control state only and does not execute Codex workers.
+Phase 3 workers consume queued tasks and execute Codex outside the MCP server process.
 """.strip()
 
 
