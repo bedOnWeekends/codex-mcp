@@ -79,6 +79,12 @@ class GitWorktreeManager:
             branch=f"{self.branch_prefix}{run_id.hex}/agent-{assignment_key}",
         )
 
+    async def prepare_agent_attempt(self, path: Path) -> None:
+        """Discard only uncommitted residue from a private agent worktree."""
+        await self._verify_existing_worktree(path)
+        await self._git(path, "reset", "--hard", "HEAD")
+        await self._git(path, "clean", "-fd")
+
     async def _ensure_named_worktree(
         self,
         *,
