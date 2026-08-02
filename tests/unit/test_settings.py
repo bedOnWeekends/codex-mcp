@@ -26,7 +26,7 @@ def test_non_async_postgres_url_is_rejected() -> None:
         Settings.model_validate({"database_url": "postgresql://localhost/orchestrator"})
 
 
-def test_fake_modes_are_safe_defaults(
+def test_fake_modes_and_agent_limits_are_safe_defaults(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -38,6 +38,7 @@ def test_fake_modes_are_safe_defaults(
         "ORCH_GITHUB_PUBLISH_MODE",
         "ORCH_GITHUB_TOKEN",
         "ORCH_GITHUB_REMOTE_NAME",
+        "ORCH_MAX_AGENTS_PER_RUN",
     ):
         monkeypatch.delenv(name, raising=False)
 
@@ -49,6 +50,18 @@ def test_fake_modes_are_safe_defaults(
     assert settings.github_publish_mode == "fake"
     assert settings.github_token is None
     assert settings.github_remote_name == "origin"
+    assert settings.max_agents_per_run == 8
+
+
+@pytest.mark.parametrize("value", [2, 9])
+def test_agent_limit_is_bounded(tmp_path: Path, value: int) -> None:
+    with pytest.raises(ValidationError):
+        Settings.model_validate(
+            {
+                "runtime_dir": tmp_path / "runtime",
+                "max_agents_per_run": value,
+            }
+        )
 
 
 def test_legacy_never_approval_policy_is_normalized(tmp_path: Path) -> None:
