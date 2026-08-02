@@ -220,14 +220,28 @@ class Phase5Store(Phase4Store):
         self,
         task_id: UUID,
         *,
-        commit_sha: str,
+        commit_sha: str | None,
         changed_files: list[str],
         commands_run: list[str],
     ) -> DeliveryCompletionOutcome:
-        if len(commit_sha) != 40 or any(
-            character not in "0123456789abcdef" for character in commit_sha.lower()
+        if commit_sha is not None and (
+            len(commit_sha) != 40
+            or any(
+                character not in "0123456789abcdef"
+                for character in commit_sha.lower()
+            )
         ):
             raise ValueError("commit_sha must be a 40-character hexadecimal Git SHA")
+        summary = (
+            f"Created verified local commit {commit_sha}."
+            if commit_sha is not None
+            else "Verified fake-mode delivery completed with no file changes."
+        )
+        event_type = (
+            "run.delivery_committed"
+            if commit_sha is not None
+            else "run.delivery_noop"
+        )
         async with self._session_factory.begin() as session:
             task = await self._locked_task(session, task_id)
             if TaskKind(task.kind) is not TaskKind.DELIVER:
@@ -241,7 +255,7 @@ class Phase5Store(Phase4Store):
             )
             result = self._result(
                 task_id,
-                f"Created verified local commit {commit_sha}.",
+                summary,
                 True,
                 changed_files=changed_files,
                 commands_run=commands_run,
@@ -256,7 +270,7 @@ class Phase5Store(Phase4Store):
                 session,
                 run_id=run.id,
                 task_id=task_id,
-                event_type="run.delivery_committed",
+                event_type=event_type,
                 payload={
                     "commit_sha": commit_sha,
                     "changed_files": changed_files,
