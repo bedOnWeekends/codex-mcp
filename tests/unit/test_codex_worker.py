@@ -10,7 +10,7 @@ import pytest
 
 from orchestrator.codex_client import CodexRunResult
 from orchestrator.codex_worker import CodexWorker
-from orchestrator.phase4_store import Phase4Store
+from orchestrator.phase5_store import Phase5Store
 from orchestrator.schemas import (
     ModelTier,
     Repository,
@@ -23,7 +23,7 @@ from orchestrator.schemas import (
 )
 from orchestrator.settings import Settings
 from orchestrator.verification import CommandResult, VerificationResult
-from orchestrator.worktree import WorktreeInfo
+from orchestrator.worktree import DeliveryCommit, WorktreeInfo
 
 
 class StaticClient:
@@ -111,7 +111,7 @@ async def test_plan_task_is_completed_without_real_codex_usage(tmp_path: Path) -
         kind=TaskKind.PLAN,
         run_status=RunStatus.PLANNING,
     )
-    store = AsyncMock(spec=Phase4Store)
+    store = AsyncMock(spec=Phase5Store)
     store.claim_next_task.return_value = task
     store.get_run.return_value = run
     store.get_repository.return_value = repository
@@ -133,7 +133,7 @@ async def test_worker_retries_failure_without_terminating_loop(tmp_path: Path) -
         kind=TaskKind.PLAN,
         run_status=RunStatus.PLANNING,
     )
-    store = AsyncMock(spec=Phase4Store)
+    store = AsyncMock(spec=Phase5Store)
     store.claim_next_task.return_value = task
     store.get_run.return_value = run
     store.get_repository.return_value = repository
@@ -157,7 +157,7 @@ async def test_review_task_runs_verification_and_completes_review(
     )
     assert task.worktree_path is not None
     task.worktree_path.mkdir(parents=True)
-    store = AsyncMock(spec=Phase4Store)
+    store = AsyncMock(spec=Phase5Store)
     store.claim_next_task.return_value = task
     store.get_run.return_value = run
     store.get_repository.return_value = repository
@@ -185,3 +185,55 @@ async def test_review_task_runs_verification_and_completes_review(
     )
     assert await worker.process_one() is True
     store.complete_review_task.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_delivery_reverifies_and_creates_local_commit(tmp_path: Path) -> None:
+    repository, run, task = make_objects(
+        tmp_path,
+        kind=TaskKind.DELIVER,
+        run_status=RunStatus.DELIVERING,
+    )
+    assert task.worktree_path is not None
+    task.worktree_path.mkdir(parents=True)
+    task = task.model_copy(update={"instruction": "feat: add quote lookup"})
+    store = AsyncMock(spec=Phase5Store)
+    store.claim_next_task.return_value = task
+    store.get_run.return_value = run
+    store.get_repository.return_value = repository
+    worktrees = AsyncMock()
+    worktrees.ensure.return_value = WorktreeInfo(
+        path=task.worktree_path,
+        branch="orchestrator/run-test",
+    )
+    worktrees.diff.side_effect = ["verified patch", "verified patch"]
+    worktrees.commit_verified_changes.return_value = DeliveryCommit(
+        sha="a" * 40,
+        branch="orchestrator/run-test",
+        changed_files=["src/quote.py"],
+    )
+    verifier = AsyncMock()
+    verifier.run.return_value = VerificationResult(
+        commands=[
+            CommandResult(
+                name="git diff check",
+                command=["git", "diff", "--check"],
+                returncode=0,
+                output="",
+            )
+        ]
+    )
+    worker = CodexWorker(
+        store,
+        settings(tmp_path),
+        worktrees=worktrees,
+        verifier=verifier,
+    )
+    assert await worker.process_one() is True
+    worktrees.commit_verified_changes.assert_awaited_once_with(
+        task.worktree_path,
+        message="feat: add quote lookup",
+        run_id=run.id,
+    )
+    store.complete_delivery_task.assert_awaited_once()
+    store.fail_or_retry_task.assert_not_awaited()
