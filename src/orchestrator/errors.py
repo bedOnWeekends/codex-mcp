@@ -70,3 +70,7 @@ class InvalidRepositoryError(OrchestratorError):
 
     def __str__(self) -> str:
         return f"Invalid repository {self.path!r}: {self.reason}"
+
+
+class NoChangesToCommitError(InvalidRepositoryError):
+    """Raised when a delivery has neither changes nor a reusable run commit."""
