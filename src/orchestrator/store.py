@@ -67,7 +67,8 @@ class Store:
             root_path=str(data.root_path),
             default_branch=data.default_branch,
             verification_config=[
-                item.model_dump(mode="json") for item in data.verification_config
+                VerificationCommandSpec.model_validate(item).model_dump(mode="json")
+                for item in data.verification_config
             ],
         )
         try:
