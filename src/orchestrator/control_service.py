@@ -3,6 +3,8 @@ from __future__ import annotations
 from uuid import UUID
 
 from .mcp_schemas import (
+    ApproveDeliveryInput,
+    ApproveDeliveryOutput,
     ApprovePlanInput,
     ApprovePlanOutput,
     CancelRunInput,
@@ -14,7 +16,7 @@ from .mcp_schemas import (
     RepositorySummary,
     TaskSummary,
 )
-from .phase4_store import Phase4Store
+from .phase5_store import Phase5Store
 from .schemas import ModelTier, RiskLevel, RunCreate
 from .settings import Settings
 
@@ -22,7 +24,7 @@ from .settings import Settings
 class RunControlService:
     """Application service used by MCP tools and future local clients."""
 
-    def __init__(self, store: Phase4Store, settings: Settings) -> None:
+    def __init__(self, store: Phase5Store, settings: Settings) -> None:
         self._store = store
         self._settings = settings
 
@@ -93,6 +95,33 @@ class RunControlService:
             message=(
                 "Plan approved. Implementation task queued in an isolated Git "
                 "worktree; no merge will be performed automatically."
+            ),
+        )
+
+    async def approve_delivery(
+        self,
+        request: ApproveDeliveryInput,
+    ) -> ApproveDeliveryOutput:
+        run = await self._store.get_run(request.run_id)
+        assert self._settings.worktrees_dir is not None
+        worktree_path = self._settings.worktrees_dir / str(run.id)
+        run, task, _ = await self._store.approve_delivery_and_queue_task(
+            run.id,
+            expected_version=request.expected_version,
+            commit_message=request.commit_message,
+            notes=request.notes,
+            max_attempts=self._settings.max_attempts_per_task,
+            worktree_path=worktree_path,
+        )
+        return ApproveDeliveryOutput(
+            run_id=run.id,
+            status=run.status,
+            version=run.version,
+            delivery_task_id=task.id,
+            delivery_task_status=task.status,
+            message=(
+                "Delivery approved. Verification will run again before a local commit "
+                "is created in the isolated worktree. No push or merge will occur."
             ),
         )
 
