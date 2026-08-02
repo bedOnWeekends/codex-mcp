@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import Path
+from typing import Literal
 from uuid import UUID
 
 from sqlalchemy import select
@@ -144,7 +145,7 @@ class Phase6Store(Phase5Store):
         expected_version: int,
         title: str,
         body: str,
-        draft: bool,
+        draft: Literal[True],
         notes: str | None,
         max_attempts: int,
         worktree_path: Path,
