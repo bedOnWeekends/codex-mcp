@@ -17,8 +17,23 @@ from .github_publisher import (
     publisher_from_settings,
 )
 from .model_router import choose_model
-from .phase6_store import Phase6Store
-from .schemas import ArtifactKind, Repository, Run, Task, TaskKind
+from .multi_agent import (
+    agent_commit_message,
+    build_agent_prompt,
+    build_supervisor_prompt,
+    fake_agent_plan,
+    parse_agent_plan,
+    validate_agent_changes,
+)
+from .phase7_store import Phase7Store
+from .schemas import (
+    AgentRole,
+    ArtifactKind,
+    Repository,
+    Run,
+    Task,
+    TaskKind,
+)
 from .settings import Settings
 from .verification import VerificationRunner
 from .worktree import GitWorktreeManager
@@ -30,7 +45,7 @@ ClientFactory = Callable[[Task, Run], CodexRunner]
 class CodexWorker:
     def __init__(
         self,
-        store: Phase6Store,
+        store: Phase7Store,
         settings: Settings,
         *,
         worktrees: GitWorktreeManager | None = None,
@@ -59,7 +74,13 @@ class CodexWorker:
         try:
             run = await self.store.get_run(task.run_id)
             repository = await self.store.get_repository(run.repository_id)
-            if task.kind is TaskKind.REVIEW:
+            if task.kind is TaskKind.SUPERVISE:
+                await self._process_supervisor(task, run, repository)
+            elif task.kind is TaskKind.AGENT:
+                await self._process_agent(task, run, repository)
+            elif task.kind is TaskKind.INTEGRATE:
+                await self._process_integration(task, run, repository)
+            elif task.kind is TaskKind.REVIEW:
                 await self._process_review(task, run, repository)
             elif task.kind is TaskKind.DELIVER:
                 await self._process_delivery(task, run, repository)
@@ -76,6 +97,190 @@ class CodexWorker:
                 error_summary=f"{type(exc).__name__}: {exc}",
             )
         return True
+
+    async def _process_supervisor(
+        self,
+        task: Task,
+        run: Run,
+        repository: Repository,
+    ) -> None:
+        if self.settings.codex_mode == "fake":
+            plan = fake_agent_plan()
+            thread_id = None
+            input_tokens = 0
+            output_tokens = 0
+        else:
+            client = self._client_for(task, run, read_only=True)
+            result = await client.run(
+                prompt=(
+                    build_supervisor_prompt(
+                        repository,
+                        run,
+                        max_agents=self.settings.max_agents_per_run,
+                    )
+                    + f"\n\nApproval context:\n{task.instruction}"
+                ),
+                cwd=repository.root_path,
+                thread_id=task.codex_thread_id,
+            )
+            plan = parse_agent_plan(result.text)
+            thread_id = result.thread_id or None
+            input_tokens = result.input_tokens
+            output_tokens = result.output_tokens
+        if len(plan.assignments) > self.settings.max_agents_per_run:
+            raise ValueError(
+                "supervisor produced more assignments than max_agents_per_run"
+            )
+
+        plan_json = plan.model_dump_json(indent=2)
+        await self._record_artifact(
+            run_id=run.id,
+            task_id=task.id,
+            kind=ArtifactKind.AGENT_PLAN,
+            filename="agent-plan.json",
+            content=plan_json,
+        )
+        assert self.settings.worktrees_dir is not None
+        await self.store.complete_supervision_task(
+            task.id,
+            plan=plan,
+            summary=(
+                f"Created a validated DAG with {len(plan.assignments)} agent "
+                "assignments."
+            ),
+            codex_thread_id=thread_id,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            estimated_cost_usd=Decimal("0"),
+            agents_root=self.settings.worktrees_dir / str(run.id) / "agents",
+            max_attempts=self.settings.max_attempts_per_task,
+        )
+
+    async def _process_agent(
+        self,
+        task: Task,
+        run: Run,
+        repository: Repository,
+    ) -> None:
+        assignment = await self.store.get_agent_assignment_for_task(task.id)
+        if assignment.worktree_path is None:
+            raise ValueError("agent assignment has no worktree path")
+        workspace_info = await self.worktrees.ensure_agent(
+            repository=repository,
+            run_id=run.id,
+            assignment_key=assignment.key,
+            path=assignment.worktree_path,
+        )
+        dependency_commits = await self.store.dependency_commits_for_assignment(
+            assignment.id
+        )
+        await self.worktrees.apply_commits(workspace_info.path, dependency_commits)
+        dependency_context = await self.store.dependency_context_for_assignment(
+            assignment.id
+        )
+        client = self._client_for(
+            task,
+            run,
+            read_only=assignment.role is not AgentRole.IMPLEMENTER,
+        )
+        result = await client.run(
+            prompt=build_agent_prompt(
+                repository,
+                run,
+                assignment,
+                dependency_context=dependency_context,
+            ),
+            cwd=workspace_info.path,
+            thread_id=assignment.codex_thread_id,
+        )
+        changed_files = validate_agent_changes(
+            assignment,
+            await self.worktrees.changed_files(workspace_info.path),
+        )
+        diff = await self.worktrees.diff(workspace_info.path)
+        await self._record_artifact(
+            run_id=run.id,
+            task_id=task.id,
+            kind=ArtifactKind.AGENT_DIFF,
+            filename=f"agent-{assignment.key}.diff",
+            content=diff,
+        )
+
+        commit_sha: str | None = None
+        if assignment.role is AgentRole.IMPLEMENTER:
+            try:
+                commit = await self.worktrees.commit_agent_changes(
+                    workspace_info.path,
+                    message=agent_commit_message(assignment.key),
+                    run_id=run.id,
+                    assignment_id=assignment.id,
+                )
+                commit_sha = commit.sha
+                changed_files = commit.changed_files
+            except NoChangesToCommitError:
+                if self.settings.codex_mode != "fake":
+                    raise
+
+        assert self.settings.worktrees_dir is not None
+        await self.store.complete_agent_task(
+            task.id,
+            summary=result.text,
+            changed_files=changed_files,
+            commit_sha=commit_sha,
+            codex_thread_id=result.thread_id or None,
+            input_tokens=result.input_tokens,
+            output_tokens=result.output_tokens,
+            estimated_cost_usd=Decimal("0"),
+            integration_worktree_path=self.settings.worktrees_dir / str(run.id),
+            max_attempts=self.settings.max_attempts_per_task,
+        )
+
+    async def _process_integration(
+        self,
+        task: Task,
+        run: Run,
+        repository: Repository,
+    ) -> None:
+        if task.worktree_path is None:
+            raise ValueError("integration task has no worktree path")
+        workspace_info = await self.worktrees.ensure(
+            repository=repository,
+            run_id=run.id,
+            path=task.worktree_path,
+        )
+        commits = await self.store.integration_commits(run.id)
+        integration = await self.worktrees.apply_commits(
+            workspace_info.path,
+            commits,
+        )
+        receipt = (
+            f"branch={integration.branch}\n"
+            "applied_commits=\n"
+            + "\n".join(f"- {item}" for item in integration.applied_commits)
+            + "\nchanged_files=\n"
+            + "\n".join(f"- {item}" for item in integration.changed_files)
+            + "\n"
+        )
+        await self._record_artifact(
+            run_id=run.id,
+            task_id=task.id,
+            kind=ArtifactKind.INTEGRATION_RECEIPT,
+            filename="integration-receipt.txt",
+            content=receipt,
+        )
+        await self.store.complete_integration_task(
+            task.id,
+            summary=(
+                f"Integrated {len(integration.applied_commits)} agent commits into "
+                f"{integration.branch}."
+            ),
+            changed_files=integration.changed_files,
+            applied_commits=integration.applied_commits,
+            review_instruction=self._build_review_instruction(
+                integration.changed_files
+            ),
+            review_max_attempts=self.settings.max_attempts_per_task,
+        )
 
     async def _process_codex_task(
         self,
@@ -314,7 +519,13 @@ class CodexWorker:
         )
         return info.path
 
-    def _client_for(self, task: Task, run: Run) -> CodexRunner:
+    def _client_for(
+        self,
+        task: Task,
+        run: Run,
+        *,
+        read_only: bool = False,
+    ) -> CodexRunner:
         if self.client_factory is not None:
             return self.client_factory(task, run)
         if self.settings.codex_mode == "fake":
@@ -327,7 +538,7 @@ class CodexWorker:
         )
         sandbox_mode = (
             "read-only"
-            if task.kind is TaskKind.PLAN
+            if read_only or task.kind in {TaskKind.PLAN, TaskKind.SUPERVISE}
             else self.settings.codex_sandbox_mode
         )
         return CodexClient(
@@ -365,7 +576,7 @@ class CodexWorker:
         files = "\n".join(f"- {item}" for item in changed_files) or "- None"
         return (
             "Run the administrator-registered verification commands in the isolated "
-            "worktree. Do not modify files.\n\nChanged files:\n"
+            "integration worktree. Do not modify files.\n\nChanged files:\n"
             f"{files}"
         )
 
@@ -374,7 +585,7 @@ class CodexWorker:
         clipped = verification_summary[-20_000:]
         return (
             "Fix only the failures reported by the latest verification run. Preserve "
-            "the approved plan and do not commit, merge, push, deploy, or access live "
-            "credentials.\n\nVerification output:\n"
+            "the approved plan and integrated agent changes. Do not commit, merge, "
+            "push, deploy, or access live credentials.\n\nVerification output:\n"
             f"{clipped}"
         )
