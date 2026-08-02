@@ -71,11 +71,28 @@ class OrchestratorModel(BaseModel):
     model_config = ConfigDict(from_attributes=True, extra="forbid")
 
 
+class VerificationCommandSpec(OrchestratorModel):
+    """Trusted local verification command registered by an administrator."""
+
+    name: str = Field(min_length=1, max_length=120)
+    command: list[str] = Field(min_length=1)
+    timeout_seconds: int = Field(default=300, ge=1, le=3600)
+    env: dict[str, str] = Field(default_factory=dict)
+
+    @field_validator("command")
+    @classmethod
+    def normalize_command(cls, values: list[str]) -> list[str]:
+        normalized = [item.strip() for item in values]
+        if any(not item for item in normalized):
+            raise ValueError("verification command arguments must be non-empty")
+        return normalized
+
+
 class RepositoryCreate(OrchestratorModel):
     name: str = Field(min_length=1, max_length=120)
     root_path: Path
     default_branch: str = Field(default="main", min_length=1, max_length=200)
-    verification_config: list[dict[str, Any]] = Field(default_factory=list)
+    verification_config: list[VerificationCommandSpec] = Field(default_factory=list)
 
     @field_validator("root_path")
     @classmethod
@@ -128,13 +145,13 @@ class TaskCreate(OrchestratorModel):
     max_attempts: int = Field(default=2, ge=1, le=10)
     priority: int = Field(default=0, ge=-100, le=100)
     worktree_path: Path | None = None
+    codex_thread_id: str | None = None
 
 
 class Task(TaskCreate):
     id: UUID
     status: TaskStatus
     attempt: int
-    codex_thread_id: str | None = None
     input_tokens: int
     output_tokens: int
     estimated_cost_usd: Decimal

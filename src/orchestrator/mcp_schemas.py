@@ -20,6 +20,7 @@ class RepositorySummary(OrchestratorModel):
     id: UUID
     name: str
     default_branch: str
+    verification_commands: list[str] = Field(default_factory=list)
 
 
 class ListRepositoriesOutput(OrchestratorModel):
@@ -44,6 +45,21 @@ class CreateRunOutput(OrchestratorModel):
     message: str
 
 
+class ApprovePlanInput(OrchestratorModel):
+    run_id: UUID
+    expected_version: int = Field(ge=1)
+    notes: str | None = Field(default=None, max_length=4_000)
+
+
+class ApprovePlanOutput(OrchestratorModel):
+    run_id: UUID
+    status: RunStatus
+    version: int
+    implementation_task_id: UUID
+    implementation_task_status: TaskStatus
+    message: str
+
+
 class GetRunInput(OrchestratorModel):
     run_id: UUID
 
@@ -58,6 +74,11 @@ class TaskSummary(OrchestratorModel):
     input_tokens: int
     output_tokens: int
     estimated_cost_usd: Decimal
+    codex_thread_id: str | None
+    result_success: bool | None = None
+    result_summary: str | None = None
+    changed_files: list[str] = Field(default_factory=list)
+    commands_run: list[str] = Field(default_factory=list)
     started_at: datetime | None
     completed_at: datetime | None
 

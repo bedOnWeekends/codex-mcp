@@ -22,49 +22,59 @@ class Settings(BaseSettings):
     app_name: str = "codex-orchestrator"
     environment: Literal["development", "test", "production"] = "development"
     log_level: Literal["critical", "error", "warning", "info", "debug"] = "info"
-
     server_host: str = "127.0.0.1"
     server_port: int = Field(default=8000, ge=1, le=65_535)
     mcp_path: str = "/mcp"
     mcp_json_response: bool = True
     mcp_stateless_http: bool = True
-
-    database_url: str = Field(
-        default=(
-            "postgresql+asyncpg://orchestrator:orchestrator@"
-            "127.0.0.1:5433/orchestrator"
-        ),
-        repr=False,
-    )
+    database_url: str = Field(default="postgresql+asyncpg://orchestrator:orchestrator@127.0.0.1:5433/orchestrator", repr=False)
     database_echo: bool = False
     database_pool_size: int = Field(default=5, ge=1, le=50)
     database_max_overflow: int = Field(default=10, ge=0, le=100)
     database_pool_timeout_seconds: int = Field(default=30, ge=1, le=300)
-
     runtime_dir: Path = Path("runtime")
     worktrees_dir: Path | None = None
     artifacts_dir: Path | None = None
     logs_dir: Path | None = None
-
     max_parallel_workers: int = Field(default=3, ge=1, le=16)
     max_attempts_per_task: int = Field(default=2, ge=1, le=10)
     max_replans: int = Field(default=1, ge=0, le=5)
-
+    max_fix_cycles: int = Field(default=2, ge=0, le=10)
     worker_poll_interval_seconds: float = Field(default=1.0, gt=0, le=60)
     worker_id: str = "local-worker"
+    codex_mode: Literal["fake", "live"] = "fake"
+    fake_codex_delay_seconds: float = Field(default=0.0, ge=0, le=30)
     codex_model_cheap: str | None = None
     codex_model_default: str | None = None
     codex_model_critical: str | None = None
     codex_approval_policy: str = "never"
-    codex_sandbox_mode: str = "read-only"
+    codex_sandbox_mode: str = "workspace-write"
+    verification_timeout_seconds: int = Field(default=300, ge=1, le=3600)
+    worktree_branch_prefix: str = "orchestrator/run-"
+
+    @field_validator("codex_approval_policy")
+    @classmethod
+    def validate_codex_approval_policy(cls, value: str) -> str:
+        normalized = value.strip().lower().replace("-", "_")
+        if normalized == "never":
+            return "deny_all"
+        if normalized not in {"deny_all", "auto_review"}:
+            raise ValueError("codex_approval_policy must be 'deny_all' or 'auto_review'")
+        return normalized
+
+    @field_validator("codex_sandbox_mode")
+    @classmethod
+    def validate_codex_sandbox_mode(cls, value: str) -> str:
+        normalized = value.strip().lower().replace("_", "-")
+        if normalized not in {"read-only", "workspace-write"}:
+            raise ValueError("codex_sandbox_mode must be 'read-only' or 'workspace-write'")
+        return normalized
 
     @field_validator("database_url")
     @classmethod
     def validate_database_url(cls, value: str) -> str:
         if not value.startswith("postgresql+asyncpg://"):
-            raise ValueError(
-                "database_url must use the postgresql+asyncpg:// async driver"
-            )
+            raise ValueError("database_url must use the postgresql+asyncpg:// async driver")
         return value
 
     @field_validator("mcp_path")
@@ -82,6 +92,16 @@ class Settings(BaseSettings):
     def expand_runtime_dir(cls, value: str | Path) -> Path:
         return Path(value).expanduser()
 
+    @field_validator("worktree_branch_prefix")
+    @classmethod
+    def validate_branch_prefix(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("worktree_branch_prefix must not be empty")
+        if normalized.startswith("-") or " " in normalized:
+            raise ValueError("worktree_branch_prefix is not a safe Git ref prefix")
+        return normalized
+
     @model_validator(mode="after")
     def derive_runtime_paths(self) -> "Settings":
         runtime = self.runtime_dir.resolve()
@@ -92,12 +112,7 @@ class Settings(BaseSettings):
         return self
 
     def ensure_runtime_directories(self) -> None:
-        for path in (
-            self.runtime_dir,
-            self.worktrees_dir,
-            self.artifacts_dir,
-            self.logs_dir,
-        ):
+        for path in (self.runtime_dir, self.worktrees_dir, self.artifacts_dir, self.logs_dir):
             assert path is not None
             path.mkdir(parents=True, exist_ok=True)
 

@@ -13,14 +13,17 @@ from starlette.responses import JSONResponse
 from .control_service import RunControlService
 from .database import Database, create_database
 from .mcp_tools import register_mcp_tools
+from .phase4_store import Phase4Store
 from .settings import Settings
-from .store import Store
 
 SERVER_INSTRUCTIONS = """
-Use list_repositories before create_run. create_run only accepts repositories that
-were registered locally by an administrator and queues a planning task. Use get_run
-to read the authoritative status and version. cancel_run requires the latest version.
-Phase 3 workers consume queued tasks and execute Codex outside the MCP server process.
+Use list_repositories before create_run. create_run queues a read-only planning task.
+Use get_run to read the authoritative status and version. Only call approve_plan after
+the run reaches awaiting_plan_approval and pass the latest version. Approval authorizes
+changes only in an isolated Git worktree; the orchestrator never commits, merges,
+pushes, deploys, or trades. cancel_run also requires the latest version. Phase 4 workers
+execute planning, implementation, verification, and bounded fix tasks outside the MCP
+server process.
 """.strip()
 
 
@@ -28,7 +31,7 @@ Phase 3 workers consume queued tasks and execute Codex outside the MCP server pr
 class OrchestratorApplication:
     settings: Settings
     database: Database
-    store: Store
+    store: Phase4Store
     service: RunControlService
     mcp: FastMCP[Any]
     asgi_app: Starlette
@@ -37,9 +40,8 @@ class OrchestratorApplication:
 def build_application(settings: Settings) -> OrchestratorApplication:
     settings.ensure_runtime_directories()
     database = create_database(settings)
-    store = Store(database.session_factory)
+    store = Phase4Store(database.session_factory)
     service = RunControlService(store, settings)
-
     mcp: FastMCP[Any] = FastMCP(
         name=settings.app_name,
         instructions=SERVER_INSTRUCTIONS,
