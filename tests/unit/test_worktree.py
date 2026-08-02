@@ -105,15 +105,21 @@ async def test_delivery_commit_is_local_and_idempotent(tmp_path: Path) -> None:
     assert repeated.changed_files == ["feature.py"]
     assert repeated.reused is True
     assert not (root / "feature.py").exists()
-    assert subprocess.run(
-        ["git", "-C", str(info.path), "status", "--porcelain"],
-        check=True,
-        capture_output=True,
-        text=True,
-    ).stdout == ""
-    assert subprocess.run(
-        ["git", "-C", str(info.path), "log", "-1", "--format=%s"],
-        check=True,
-        capture_output=True,
-        text=True,
-    ).stdout.strip() == "feat: add delivery workflow"
+    assert (
+        subprocess.run(
+            ["git", "-C", str(info.path), "status", "--porcelain"],
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout
+        == ""
+    )
+    assert (
+        subprocess.run(
+            ["git", "-C", str(info.path), "log", "-1", "--format=%s"],
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+        == "feat: add delivery workflow"
+    )
