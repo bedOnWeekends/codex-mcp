@@ -249,7 +249,7 @@ class CodexWorker:
             path=task.worktree_path,
         )
         commits = await self.store.integration_commits(run.id)
-        integration = await self.worktrees.apply_commits(
+        integration = await self.worktrees.integrate_commits(
             workspace_info.path,
             commits,
         )
