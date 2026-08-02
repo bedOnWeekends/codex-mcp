@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 from datetime import datetime
 from decimal import Decimal
+from typing import Literal
 from uuid import UUID
 
 from pydantic import Field, field_validator
@@ -102,7 +103,7 @@ class ApprovePublishInput(OrchestratorModel):
     expected_version: int = Field(ge=1)
     title: str = Field(min_length=1, max_length=256)
     body: str = Field(default="", max_length=60_000)
-    draft: bool = True
+    draft: Literal[True] = True
     notes: str | None = Field(default=None, max_length=4_000)
 
     @field_validator("title")
