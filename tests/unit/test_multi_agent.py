@@ -320,9 +320,7 @@ def make_assignment(
         depends_on=[],
         owned_paths=owned_paths,
         model_tier=(
-            ModelTier.DEFAULT
-            if role is AgentRole.IMPLEMENTER
-            else ModelTier.CRITICAL
+            ModelTier.DEFAULT if role is AgentRole.IMPLEMENTER else ModelTier.CRITICAL
         ),
         worktree_path=tmp_path / "worktree",
         changed_files=[],

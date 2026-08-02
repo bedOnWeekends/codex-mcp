@@ -29,7 +29,9 @@ def choose_model_profile(
             effort=settings.codex_effort_scout,
         )
     if kind is TaskKind.PLAN:
-        selected = ModelTier.CRITICAL if risk is RiskLevel.CRITICAL else ModelTier.DEFAULT
+        selected = (
+            ModelTier.CRITICAL if risk is RiskLevel.CRITICAL else ModelTier.DEFAULT
+        )
         return ModelProfile(
             model=_model(settings, selected),
             tier=selected,

@@ -62,20 +62,12 @@ def upgrade() -> None:
         sa.ForeignKeyConstraint(["run_id"], ["runs.id"], ondelete="CASCADE"),
         sa.ForeignKeyConstraint(["task_id"], ["tasks.id"], ondelete="SET NULL"),
         sa.PrimaryKeyConstraint("id"),
-        sa.UniqueConstraint(
-            "run_id", "key", name="uq_agent_assignments_run_key"
-        ),
+        sa.UniqueConstraint("run_id", "key", name="uq_agent_assignments_run_key"),
         sa.UniqueConstraint("task_id", name="uq_agent_assignments_task_id"),
     )
-    op.create_index(
-        "ix_agent_assignments_run_id", "agent_assignments", ["run_id"]
-    )
-    op.create_index(
-        "ix_agent_assignments_task_id", "agent_assignments", ["task_id"]
-    )
-    op.create_index(
-        "ix_agent_assignments_status", "agent_assignments", ["status"]
-    )
+    op.create_index("ix_agent_assignments_run_id", "agent_assignments", ["run_id"])
+    op.create_index("ix_agent_assignments_task_id", "agent_assignments", ["task_id"])
+    op.create_index("ix_agent_assignments_status", "agent_assignments", ["status"])
     op.create_index(
         "ix_agent_assignments_run_status_created_at",
         "agent_assignments",

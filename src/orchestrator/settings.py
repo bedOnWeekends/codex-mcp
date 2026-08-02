@@ -77,52 +77,30 @@ class Settings(BaseSettings):
     codex_approval_policy: str = "never"
     codex_sandbox_mode: str = "workspace-write"
 
-    codex_price_cheap_input_per_mtok: Decimal = Field(
-        default=Decimal("1.00"), ge=0
-    )
+    codex_price_cheap_input_per_mtok: Decimal = Field(default=Decimal("1.00"), ge=0)
     codex_price_cheap_cached_input_per_mtok: Decimal = Field(
         default=Decimal("0.10"), ge=0
     )
-    codex_price_cheap_output_per_mtok: Decimal = Field(
-        default=Decimal("6.00"), ge=0
-    )
-    codex_price_default_input_per_mtok: Decimal = Field(
-        default=Decimal("2.50"), ge=0
-    )
+    codex_price_cheap_output_per_mtok: Decimal = Field(default=Decimal("6.00"), ge=0)
+    codex_price_default_input_per_mtok: Decimal = Field(default=Decimal("2.50"), ge=0)
     codex_price_default_cached_input_per_mtok: Decimal = Field(
         default=Decimal("0.25"), ge=0
     )
-    codex_price_default_output_per_mtok: Decimal = Field(
-        default=Decimal("15.00"), ge=0
-    )
-    codex_price_critical_input_per_mtok: Decimal = Field(
-        default=Decimal("5.00"), ge=0
-    )
+    codex_price_default_output_per_mtok: Decimal = Field(default=Decimal("15.00"), ge=0)
+    codex_price_critical_input_per_mtok: Decimal = Field(default=Decimal("5.00"), ge=0)
     codex_price_critical_cached_input_per_mtok: Decimal = Field(
         default=Decimal("0.50"), ge=0
     )
     codex_price_critical_output_per_mtok: Decimal = Field(
         default=Decimal("30.00"), ge=0
     )
-    codex_cache_write_multiplier: Decimal = Field(
-        default=Decimal("1.25"), ge=1
-    )
-    projected_call_cost_usd_cheap: Decimal = Field(
-        default=Decimal("0.05"), ge=0
-    )
-    projected_call_cost_usd_default: Decimal = Field(
-        default=Decimal("0.45"), ge=0
-    )
-    projected_call_cost_usd_critical: Decimal = Field(
-        default=Decimal("1.00"), ge=0
-    )
+    codex_cache_write_multiplier: Decimal = Field(default=Decimal("1.25"), ge=1)
+    projected_call_cost_usd_cheap: Decimal = Field(default=Decimal("0.05"), ge=0)
+    projected_call_cost_usd_default: Decimal = Field(default=Decimal("0.45"), ge=0)
+    projected_call_cost_usd_critical: Decimal = Field(default=Decimal("1.00"), ge=0)
     projected_call_tokens_cheap: int = Field(default=12_000, ge=1_000, le=500_000)
-    projected_call_tokens_default: int = Field(
-        default=60_000, ge=1_000, le=1_000_000
-    )
-    projected_call_tokens_critical: int = Field(
-        default=100_000, ge=1_000, le=2_000_000
-    )
+    projected_call_tokens_default: int = Field(default=60_000, ge=1_000, le=1_000_000)
+    projected_call_tokens_critical: int = Field(default=100_000, ge=1_000, le=2_000_000)
     budget_reserve_usd: Decimal = Field(default=Decimal("0.05"), ge=0)
 
     verification_timeout_seconds: int = Field(default=300, ge=1, le=3600)

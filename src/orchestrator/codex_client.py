@@ -3,10 +3,13 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Protocol
+from typing import Protocol, cast
 from uuid import uuid4
 
-from .settings import ReasoningEffort
+from openai_codex.types import JsonObject
+from openai_codex.types import ReasoningEffort as SdkReasoningEffort
+
+from .settings import ReasoningEffort as ConfigReasoningEffort
 
 
 class CodexSdkUnavailableError(RuntimeError):
@@ -41,12 +44,12 @@ class CodexClient:
         self,
         *,
         model: str,
-        effort: ReasoningEffort,
+        effort: ConfigReasoningEffort,
         approval_policy: str,
         sandbox_mode: str,
     ) -> None:
         self.model = model
-        self.effort = effort
+        self.effort = SdkReasoningEffort(effort)
         self.approval_policy = approval_policy
         self.sandbox_mode = sandbox_mode
 
@@ -77,6 +80,7 @@ class CodexClient:
             workspace_write=Sandbox.workspace_write,
         )
         cwd_text = str(cwd.resolve())
+        sdk_output_schema = cast(JsonObject | None, output_schema)
 
         async with AsyncCodex() as codex:
             if thread_id:
@@ -101,7 +105,7 @@ class CodexClient:
                 cwd=cwd_text,
                 effort=self.effort,
                 model=self.model,
-                output_schema=output_schema,
+                output_schema=sdk_output_schema,
                 sandbox=sandbox,
             )
 

@@ -135,9 +135,7 @@ def make_assignment(task: Task, *, role: AgentRole) -> AgentAssignment:
         depends_on=[],
         owned_paths=["src"] if role is AgentRole.IMPLEMENTER else [],
         model_tier=(
-            ModelTier.DEFAULT
-            if role is AgentRole.IMPLEMENTER
-            else ModelTier.CRITICAL
+            ModelTier.DEFAULT if role is AgentRole.IMPLEMENTER else ModelTier.CRITICAL
         ),
         worktree_path=task.worktree_path,
         changed_files=[],
@@ -220,9 +218,10 @@ async def test_fake_supervisor_chooses_single_agent_cheapest_path(
     plan = call.kwargs["plan"]
     assert plan.mode is ExecutionMode.SINGLE
     assert [item.role for item in plan.assignments] == [AgentRole.IMPLEMENTER]
-    assert call.kwargs["agents_root"] == (
-        tmp_path / "runtime" / "worktrees" / "agents" / str(run.id)
-    ).resolve()
+    assert (
+        call.kwargs["agents_root"]
+        == (tmp_path / "runtime" / "worktrees" / "agents" / str(run.id)).resolve()
+    )
     store.fail_or_retry_task.assert_not_awaited()
 
 
@@ -294,7 +293,9 @@ async def test_implementer_agent_uses_isolated_worktree_and_compact_handoff(
 
 
 @pytest.mark.asyncio
-async def test_integrator_stages_agent_commits_and_queues_review(tmp_path: Path) -> None:
+async def test_integrator_stages_agent_commits_and_queues_review(
+    tmp_path: Path,
+) -> None:
     repository, run, task = make_objects(
         tmp_path,
         kind=TaskKind.INTEGRATE,

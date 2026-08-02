@@ -31,12 +31,15 @@ def estimate_usage_cost(
     cache_write_tokens: int,
     output_tokens: int,
 ) -> UsageCost:
-    if min(
-        input_tokens,
-        cached_input_tokens,
-        cache_write_tokens,
-        output_tokens,
-    ) < 0:
+    if (
+        min(
+            input_tokens,
+            cached_input_tokens,
+            cache_write_tokens,
+            output_tokens,
+        )
+        < 0
+    ):
         raise ValueError("token usage must be non-negative")
     cached = min(cached_input_tokens, input_tokens)
     cache_write = min(cache_write_tokens, input_tokens - cached)

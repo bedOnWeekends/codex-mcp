@@ -487,7 +487,9 @@ class Phase7Store(Phase6Store):
             )
             for item in assignments
         ]
-        implementers = [item for item in assignments if item.role is AgentRole.IMPLEMENTER]
+        implementers = [
+            item for item in assignments if item.role is AgentRole.IMPLEMENTER
+        ]
         reviewers = [item for item in assignments if item.role is AgentRole.REVIEWER]
         order = AgentPlan(
             mode=(
@@ -603,9 +605,7 @@ class Phase7Store(Phase6Store):
                 assignment.started_at = (
                     None if outcome.retried else assignment.started_at
                 )
-                assignment.completed_at = (
-                    None if outcome.retried else datetime.now(UTC)
-                )
+                assignment.completed_at = None if outcome.retried else datetime.now(UTC)
         return outcome
 
     async def cancel_run(
