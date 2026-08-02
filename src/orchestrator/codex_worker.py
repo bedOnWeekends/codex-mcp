@@ -11,8 +11,13 @@ from .artifacts import ArtifactWriter
 from .codex_client import CodexClient, CodexRunner, FakeCodexClient
 from .context_builder import build_task_prompt
 from .errors import NoChangesToCommitError
+from .github_publisher import (
+    PublishTaskPayload,
+    Publisher,
+    publisher_from_settings,
+)
 from .model_router import choose_model
-from .phase5_store import Phase5Store
+from .phase6_store import Phase6Store
 from .schemas import ArtifactKind, Repository, Run, Task, TaskKind
 from .settings import Settings
 from .verification import VerificationRunner
@@ -25,12 +30,13 @@ ClientFactory = Callable[[Task, Run], CodexRunner]
 class CodexWorker:
     def __init__(
         self,
-        store: Phase5Store,
+        store: Phase6Store,
         settings: Settings,
         *,
         worktrees: GitWorktreeManager | None = None,
         verifier: VerificationRunner | None = None,
         artifacts: ArtifactWriter | None = None,
+        publisher: Publisher | None = None,
         client_factory: ClientFactory | None = None,
     ) -> None:
         self.store = store
@@ -43,6 +49,7 @@ class CodexWorker:
         )
         assert settings.artifacts_dir is not None
         self.artifacts = artifacts or ArtifactWriter(settings.artifacts_dir)
+        self.publisher = publisher or publisher_from_settings(settings)
         self.client_factory = client_factory
 
     async def process_one(self) -> bool:
@@ -56,6 +63,8 @@ class CodexWorker:
                 await self._process_review(task, run, repository)
             elif task.kind is TaskKind.DELIVER:
                 await self._process_delivery(task, run, repository)
+            elif task.kind is TaskKind.PUBLISH:
+                await self._process_publish(task, run, repository)
             else:
                 await self._process_codex_task(task, run, repository)
         except asyncio.CancelledError:
@@ -242,6 +251,48 @@ class CodexWorker:
             commit_sha=commit.sha,
             changed_files=commit.changed_files,
             commands_run=verification.commands_run,
+        )
+
+    async def _process_publish(
+        self,
+        task: Task,
+        run: Run,
+        repository: Repository,
+    ) -> None:
+        if task.worktree_path is None:
+            raise ValueError("publish task has no worktree path")
+        payload = PublishTaskPayload.model_validate_json(task.instruction)
+        workspace_info = await self.worktrees.ensure(
+            repository=repository,
+            run_id=run.id,
+            path=task.worktree_path,
+        )
+        publication = await self.publisher.publish(
+            repository=repository,
+            run_id=run.id,
+            worktree=workspace_info.path,
+            payload=payload,
+        )
+        receipt = (
+            f"mode={publication.mode}\n"
+            f"repository={publication.repository}\n"
+            f"branch={publication.branch}\n"
+            f"commit_sha={publication.commit_sha or 'none'}\n"
+            f"pull_request_url={publication.pull_request_url or 'none'}\n"
+            f"pull_request_number={publication.pull_request_number or 'none'}\n"
+            f"created={str(publication.created).lower()}\n"
+            "merged=false\n"
+        )
+        await self._record_artifact(
+            run_id=run.id,
+            task_id=task.id,
+            kind=ArtifactKind.PUBLISH_RECEIPT,
+            filename="publish-receipt.txt",
+            content=receipt,
+        )
+        await self.store.complete_publish_task(
+            task.id,
+            publication=publication,
         )
 
     async def _workspace_for(
