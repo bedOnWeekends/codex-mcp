@@ -5,10 +5,21 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Literal
 
-from pydantic import Field, SecretStr, field_validator, model_validator
+from pydantic import (
+    Field,
+    SecretStr,
+    ValidationInfo,
+    field_validator,
+    model_validator,
+)
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 ReasoningEffort = Literal["none", "low", "medium", "high", "xhigh", "max"]
+_MODEL_DEFAULTS = {
+    "codex_model_cheap": "gpt-5.6-luna",
+    "codex_model_default": "gpt-5.6-terra",
+    "codex_model_critical": "gpt-5.6-sol",
+}
 
 
 class Settings(BaseSettings):
@@ -55,9 +66,9 @@ class Settings(BaseSettings):
 
     codex_mode: Literal["fake", "live"] = "fake"
     fake_codex_delay_seconds: float = Field(default=0.0, ge=0, le=30)
-    codex_model_cheap: str = "gpt-5.6-luna"
-    codex_model_default: str = "gpt-5.6-terra"
-    codex_model_critical: str = "gpt-5.6-sol"
+    codex_model_cheap: str = _MODEL_DEFAULTS["codex_model_cheap"]
+    codex_model_default: str = _MODEL_DEFAULTS["codex_model_default"]
+    codex_model_critical: str = _MODEL_DEFAULTS["codex_model_critical"]
     codex_effort_scout: ReasoningEffort = "low"
     codex_effort_plan: ReasoningEffort = "medium"
     codex_effort_default: ReasoningEffort = "high"
@@ -149,13 +160,12 @@ class Settings(BaseSettings):
         "codex_model_cheap",
         "codex_model_default",
         "codex_model_critical",
+        mode="before",
     )
     @classmethod
-    def validate_model_name(cls, value: str) -> str:
-        normalized = value.strip()
-        if not normalized:
-            raise ValueError("Codex model names must not be empty")
-        return normalized
+    def normalize_model_name(cls, value: object, info: ValidationInfo) -> str:
+        normalized = str(value or "").strip()
+        return normalized or _MODEL_DEFAULTS[info.field_name]
 
     @field_validator("database_url")
     @classmethod
