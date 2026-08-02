@@ -227,8 +227,7 @@ class Phase5Store(Phase4Store):
         if commit_sha is not None and (
             len(commit_sha) != 40
             or any(
-                character not in "0123456789abcdef"
-                for character in commit_sha.lower()
+                character not in "0123456789abcdef" for character in commit_sha.lower()
             )
         ):
             raise ValueError("commit_sha must be a 40-character hexadecimal Git SHA")
@@ -238,9 +237,7 @@ class Phase5Store(Phase4Store):
             else "Verified fake-mode delivery completed with no file changes."
         )
         event_type = (
-            "run.delivery_committed"
-            if commit_sha is not None
-            else "run.delivery_noop"
+            "run.delivery_committed" if commit_sha is not None else "run.delivery_noop"
         )
         async with self._session_factory.begin() as session:
             task = await self._locked_task(session, task_id)
