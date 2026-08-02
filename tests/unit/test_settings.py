@@ -44,6 +44,7 @@ def test_fake_modes_and_adaptive_limits_are_safe_defaults(
         "ORCH_CODEX_MODEL_CHEAP",
         "ORCH_CODEX_MODEL_DEFAULT",
         "ORCH_CODEX_MODEL_CRITICAL",
+        "ORCH_CODEX_CACHE_WRITE_MULTIPLIER",
     ):
         monkeypatch.delenv(name, raising=False)
 
@@ -64,6 +65,7 @@ def test_fake_modes_and_adaptive_limits_are_safe_defaults(
     assert settings.codex_effort_default == "high"
     assert settings.codex_effort_critical == "medium"
     assert settings.codex_price_default_input_per_mtok == Decimal("2.50")
+    assert settings.codex_cache_write_multiplier == Decimal("1.25")
 
 
 @pytest.mark.parametrize("value", [0, 5])
