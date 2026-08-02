@@ -1,29 +1,29 @@
-# Codex Orchestrator — Phase 5
+# Codex Orchestrator — Phase 6
 
-Phase 5 adds an explicit delivery boundary after implementation and verification.
-A verification-passed run waits for a second approval. The worker then reruns the
-trusted verification commands and creates one local commit on the isolated run
-worktree branch. It never pushes, opens a pull request, merges, deploys, or trades.
+Phase 6 adds an explicit publication boundary after verified local delivery. A run
+never pushes automatically after implementation or delivery. It first waits in
+`awaiting_publish_approval`, where the operator can either finish locally or approve
+publication of the isolated run branch as a GitHub Draft Pull Request.
 
 ## Safety defaults
 
-- `ORCH_CODEX_MODE=fake` remains the default, so local end-to-end tests use no Codex
-  quota.
-- Planning always runs read-only.
-- Implementation, fixes, verification, and delivery operate only in a per-run Git
-  worktree.
-- Verification commands are registered locally by the administrator and execute
-  without a shell.
-- Delivery requires the latest run version and a Conventional Commit message.
-- Verification runs again immediately before delivery.
-- If verification changes the worktree, delivery fails instead of committing it.
-- Delivery commits are idempotent and carry an `Orchestrator-Run` trailer.
-- Fake mode completes a verified no-change delivery as an explicit no-op instead of
-  adding a synthetic file to the target repository.
-- The orchestrator never pushes, opens a pull request, merges, deploys, or accesses
-  live trading credentials.
+- `ORCH_CODEX_MODE=fake` remains the default, so planning and implementation use no
+  Codex quota.
+- `ORCH_GITHUB_PUBLISH_MODE=fake` is also the default. Fake publication performs no
+  Git push and no GitHub API request.
+- Planning is read-only.
+- Implementation, fixes, verification, delivery, and publication use a per-run Git
+  worktree and branch.
+- Delivery reruns administrator-registered verification commands before committing.
+- Publication requires another explicit approval using the latest run version.
+- Live publication accepts only a clean orchestrator run branch whose HEAD equals the
+  approved delivery commit and contains the matching `Orchestrator-Run` trailer.
+- Live publication pushes only the isolated run branch without force-push.
+- Phase 6 creates or reuses only a GitHub Draft Pull Request.
+- The orchestrator never marks a PR ready, merges, deploys, or trades.
+- `finish_run` completes a delivered run while keeping its branch local.
 
-## Phase 5 flow
+## Phase 6 flow
 
 ```text
 create_run
@@ -37,27 +37,26 @@ approve_delivery
   -> DELIVER
      -> rerun verification
      -> create one local commit on orchestrator/run-<run-id>
-  -> completed
+  -> awaiting_publish_approval
 
-Fake mode with no generated file changes:
-  -> DELIVER
-  -> rerun verification
-  -> record a verified no-op delivery
-  -> completed
+Option A: finish_run
+  -> completed with no push and no pull request
 
-Verification failure before delivery:
-  -> retry DELIVER within the configured attempt limit
-  -> failed when attempts are exhausted
+Option B: approve_publish
+  -> PUBLISH
+     -> fake mode: record a simulated publication
+     -> live mode: push the run branch and create or reuse a Draft PR
+  -> completed
 ```
 
-A real delivery commit remains local. Inspect it manually and decide whether to push
-or open a pull request outside the orchestrator.
+A failed publish task follows the existing bounded retry policy. A retry re-pushes the
+same branch and reuses an existing open Draft PR when one already exists.
 
 ## Setup
 
 ```powershell
 Copy-Item .env.example .env
-python -m pip install -e .
+python -m pip install -e ".[dev]"
 docker compose up -d postgres
 alembic upgrade head
 ```
@@ -84,8 +83,8 @@ Example `verification.json`:
 ]
 ```
 
-Commands are argv arrays. Shell strings such as `"pytest -q"`, pipes, redirects,
-and command chaining are intentionally rejected.
+Verification commands are argv arrays. Shell strings, pipes, redirects, and command
+chaining are intentionally rejected.
 
 ## Run locally
 
@@ -114,28 +113,71 @@ Public MCP tools:
 - `get_run`
 - `approve_plan`
 - `approve_delivery`
+- `approve_publish`
+- `finish_run`
 - `cancel_run`
 
-Example delivery approval after `get_run` reports
-`awaiting_delivery_approval`:
+## Zero-side-effect publication test
+
+Keep both modes fake:
+
+```env
+ORCH_CODEX_MODE=fake
+ORCH_GITHUB_PUBLISH_MODE=fake
+```
+
+After `get_run` reports `awaiting_publish_approval`, call:
 
 ```json
 {
   "run_id": "<run UUID>",
-  "expected_version": 6,
-  "commit_message": "feat(orchestrator): add quote lookup",
-  "notes": "Verification reviewed"
+  "expected_version": 8,
+  "title": "test(orchestrator): simulate draft publication",
+  "body": "Phase 6 fake publication test",
+  "draft": true,
+  "notes": "No remote side effects"
 }
 ```
 
-Use the exact latest `version` returned by `get_run`. Supported commit types are
-`feat`, `fix`, `refactor`, `test`, `docs`, `chore`, and `ci`.
+Use the exact latest `version` returned by `get_run`. The fake publisher records a
+successful simulated publication without reading Git credentials or contacting GitHub.
 
-With the default fake mode, planning and implementation use the deterministic fake
-client. When that client produces no file changes, delivery still reruns verification
-and records a no-op result without creating a commit or modifying the target project.
-Delivery itself never calls Codex. Set `ORCH_CODEX_MODE=live` only when intentionally
-performing a real Codex run.
+## Live GitHub publication
+
+Live publication is opt-in:
+
+```env
+ORCH_GITHUB_PUBLISH_MODE=live
+ORCH_GITHUB_TOKEN=<secret token>
+ORCH_GITHUB_REMOTE_NAME=origin
+ORCH_GITHUB_API_URL=https://api.github.com
+ORCH_GITHUB_API_VERSION=2026-03-10
+```
+
+The token is used only for GitHub REST API requests and is stored as a Pydantic
+`SecretStr`. The configured Git remote must separately have permission to push the run
+branch, for example through the existing Git Credential Manager or SSH configuration.
+The REST token must be able to create pull requests in the target repository.
+
+Phase 6 supports only `github.com` HTTPS and SSH remote formats. Credential-bearing
+HTTPS remote URLs are rejected. Live publication requires a real delivery commit;
+fake-mode no-op deliveries cannot be published live.
+
+Example approval:
+
+```json
+{
+  "run_id": "<run UUID>",
+  "expected_version": 8,
+  "title": "feat(trading): add quote lookup",
+  "body": "## Summary\n\nAdd verified quote lookup support.",
+  "draft": true,
+  "notes": "Reviewed local delivery"
+}
+```
+
+Supported title types are `feat`, `fix`, `refactor`, `test`, `docs`, `chore`, and
+`ci`. The `draft` field is fixed to `true`; requesting a non-draft PR is rejected.
 
 ## Validate
 
@@ -146,6 +188,5 @@ pyright
 pytest -q
 ```
 
-The database stores run status, task kind, approval type, and artifact kind as strings,
-so Phase 5 remains compatible with the existing schema and requires no new Alembic
-migration.
+Run status, task kind, approval type, and artifact kind remain string columns, so Phase
+6 requires no new Alembic migration.

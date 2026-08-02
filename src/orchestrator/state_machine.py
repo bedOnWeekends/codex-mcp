@@ -49,6 +49,20 @@ RUN_TRANSITIONS: Mapping[RunStatus, frozenset[RunStatus]] = {
         {RunStatus.DELIVERING, RunStatus.CANCELED}
     ),
     RunStatus.DELIVERING: frozenset(
+        {
+            RunStatus.AWAITING_PUBLISH_APPROVAL,
+            RunStatus.FAILED,
+            RunStatus.CANCELED,
+        }
+    ),
+    RunStatus.AWAITING_PUBLISH_APPROVAL: frozenset(
+        {
+            RunStatus.PUBLISHING,
+            RunStatus.COMPLETED,
+            RunStatus.CANCELED,
+        }
+    ),
+    RunStatus.PUBLISHING: frozenset(
         {RunStatus.COMPLETED, RunStatus.FAILED, RunStatus.CANCELED}
     ),
     RunStatus.COMPLETED: frozenset(),

@@ -7,16 +7,20 @@ from .mcp_schemas import (
     ApproveDeliveryOutput,
     ApprovePlanInput,
     ApprovePlanOutput,
+    ApprovePublishInput,
+    ApprovePublishOutput,
     CancelRunInput,
     CancelRunOutput,
     CreateRunInput,
     CreateRunOutput,
+    FinishRunInput,
+    FinishRunOutput,
     GetRunOutput,
     ListRepositoriesOutput,
     RepositorySummary,
     TaskSummary,
 )
-from .phase5_store import Phase5Store
+from .phase6_store import Phase6Store
 from .schemas import ModelTier, RiskLevel, RunCreate
 from .settings import Settings
 
@@ -24,7 +28,7 @@ from .settings import Settings
 class RunControlService:
     """Application service used by MCP tools and future local clients."""
 
-    def __init__(self, store: Phase5Store, settings: Settings) -> None:
+    def __init__(self, store: Phase6Store, settings: Settings) -> None:
         self._store = store
         self._settings = settings
 
@@ -123,6 +127,50 @@ class RunControlService:
                 "Delivery approved. Verification will run again before a local commit "
                 "is created in the isolated worktree. No push or merge will occur."
             ),
+        )
+
+    async def approve_publish(
+        self,
+        request: ApprovePublishInput,
+    ) -> ApprovePublishOutput:
+        run = await self._store.get_run(request.run_id)
+        assert self._settings.worktrees_dir is not None
+        worktree_path = self._settings.worktrees_dir / str(run.id)
+        run, task, _ = await self._store.approve_publish_and_queue_task(
+            run.id,
+            expected_version=request.expected_version,
+            title=request.title,
+            body=request.body,
+            draft=request.draft,
+            notes=request.notes,
+            max_attempts=self._settings.max_attempts_per_task,
+            worktree_path=worktree_path,
+            allow_noop=self._settings.github_publish_mode == "fake",
+        )
+        mode = self._settings.github_publish_mode
+        return ApprovePublishOutput(
+            run_id=run.id,
+            status=run.status,
+            version=run.version,
+            publish_task_id=task.id,
+            publish_task_status=task.status,
+            message=(
+                f"Publication approved in {mode} mode. The worker will publish only "
+                "the delivered run branch and will never merge the pull request."
+            ),
+        )
+
+    async def finish_run(self, request: FinishRunInput) -> FinishRunOutput:
+        run, _ = await self._store.finish_without_publish(
+            request.run_id,
+            expected_version=request.expected_version,
+            notes=request.notes,
+        )
+        return FinishRunOutput(
+            run_id=run.id,
+            status=run.status,
+            version=run.version,
+            message="Run completed without publishing its local delivery branch.",
         )
 
     async def get_run(self, run_id: UUID) -> GetRunOutput:

@@ -21,7 +21,22 @@ def test_valid_run_transition() -> None:
         RunStatus.AWAITING_DELIVERY_APPROVAL,
         RunStatus.DELIVERING,
     )
-    ensure_run_transition(RunStatus.DELIVERING, RunStatus.COMPLETED)
+    ensure_run_transition(
+        RunStatus.DELIVERING,
+        RunStatus.AWAITING_PUBLISH_APPROVAL,
+    )
+    ensure_run_transition(
+        RunStatus.AWAITING_PUBLISH_APPROVAL,
+        RunStatus.PUBLISHING,
+    )
+    ensure_run_transition(RunStatus.PUBLISHING, RunStatus.COMPLETED)
+
+
+def test_local_delivery_can_finish_without_publication() -> None:
+    ensure_run_transition(
+        RunStatus.AWAITING_PUBLISH_APPROVAL,
+        RunStatus.COMPLETED,
+    )
 
 
 def test_invalid_run_transition() -> None:
@@ -34,6 +49,11 @@ def test_delivery_cannot_skip_approval() -> None:
         ensure_run_transition(RunStatus.VERIFYING, RunStatus.DELIVERING)
 
 
+def test_publication_cannot_skip_local_delivery() -> None:
+    with pytest.raises(InvalidStateTransitionError):
+        ensure_run_transition(RunStatus.DELIVERING, RunStatus.PUBLISHING)
+
+
 def test_failed_task_can_be_requeued() -> None:
     ensure_task_transition(TaskStatus.FAILED, TaskStatus.QUEUED)
 
@@ -43,5 +63,7 @@ def test_terminal_status_helpers() -> None:
     assert is_terminal_run_status(RunStatus.CANCELED)
     assert not is_terminal_run_status(RunStatus.AWAITING_DELIVERY_APPROVAL)
     assert not is_terminal_run_status(RunStatus.DELIVERING)
+    assert not is_terminal_run_status(RunStatus.AWAITING_PUBLISH_APPROVAL)
+    assert not is_terminal_run_status(RunStatus.PUBLISHING)
     assert is_terminal_task_status(TaskStatus.COMPLETED)
     assert not is_terminal_task_status(TaskStatus.FAILED)

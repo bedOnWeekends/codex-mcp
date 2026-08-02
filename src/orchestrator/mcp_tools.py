@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Awaitable
 from decimal import Decimal
-from typing import Any
+from typing import Any, Literal
 from uuid import UUID
 
 from mcp.server.fastmcp import FastMCP
@@ -17,10 +17,14 @@ from .mcp_schemas import (
     ApproveDeliveryOutput,
     ApprovePlanInput,
     ApprovePlanOutput,
+    ApprovePublishInput,
+    ApprovePublishOutput,
     CancelRunInput,
     CancelRunOutput,
     CreateRunInput,
     CreateRunOutput,
+    FinishRunInput,
+    FinishRunOutput,
     GetRunOutput,
     ListRepositoriesOutput,
 )
@@ -155,6 +159,71 @@ def register_mcp_tools(
             "approve_delivery",
             service.approve_delivery(request),
         )
+
+    @mcp.tool(
+        name="approve_publish",
+        title="Approve GitHub Draft Pull Request Publication",
+        description=(
+            "Approve publication of the delivered local run branch. In live mode this "
+            "pushes only that branch to the registered repository origin and creates "
+            "or reuses a GitHub draft pull request. The title must follow the project "
+            "Conventional Commit convention. This never merges the pull request."
+        ),
+        annotations=ToolAnnotations(
+            readOnlyHint=False,
+            destructiveHint=True,
+            idempotentHint=False,
+            openWorldHint=True,
+        ),
+        structured_output=True,
+    )
+    async def approve_publish(
+        run_id: UUID,
+        expected_version: int,
+        title: str,
+        body: str = "",
+        draft: Literal[True] = True,
+        notes: str | None = None,
+    ) -> ApprovePublishOutput:
+        request = ApprovePublishInput(
+            run_id=run_id,
+            expected_version=expected_version,
+            title=title,
+            body=body,
+            draft=draft,
+            notes=notes,
+        )
+        return await _safe_call(
+            "approve_publish",
+            service.approve_publish(request),
+        )
+
+    @mcp.tool(
+        name="finish_run",
+        title="Finish Run Without Publication",
+        description=(
+            "Complete a locally delivered run without pushing its branch or creating "
+            "a pull request. Pass the latest run version."
+        ),
+        annotations=ToolAnnotations(
+            readOnlyHint=False,
+            destructiveHint=False,
+            idempotentHint=False,
+            openWorldHint=False,
+        ),
+        structured_output=True,
+    )
+    async def finish_run(
+        run_id: UUID,
+        expected_version: int,
+        notes: str | None = None,
+    ) -> FinishRunOutput:
+        request = FinishRunInput(
+            run_id=run_id,
+            expected_version=expected_version,
+            notes=notes,
+        )
+        return await _safe_call("finish_run", service.finish_run(request))
 
     @mcp.tool(
         name="get_run",

@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 from datetime import datetime
 from decimal import Decimal
+from typing import Literal
 from uuid import UUID
 
 from pydantic import Field, field_validator
@@ -20,6 +21,16 @@ CONVENTIONAL_COMMIT_PATTERN = re.compile(
     r"^(feat|fix|refactor|test|docs|chore|ci)"
     r"(?:\([a-z0-9][a-z0-9._/-]*\))?!?: [^\r\n]{1,72}$"
 )
+
+
+def validate_conventional_title(value: str) -> str:
+    normalized = value.strip()
+    if not CONVENTIONAL_COMMIT_PATTERN.fullmatch(normalized):
+        raise ValueError(
+            "value must follow Conventional Commits using one of "
+            "feat, fix, refactor, test, docs, chore, or ci"
+        )
+    return normalized
 
 
 class RepositorySummary(OrchestratorModel):
@@ -75,13 +86,7 @@ class ApproveDeliveryInput(OrchestratorModel):
     @field_validator("commit_message")
     @classmethod
     def validate_commit_message(cls, value: str) -> str:
-        normalized = value.strip()
-        if not CONVENTIONAL_COMMIT_PATTERN.fullmatch(normalized):
-            raise ValueError(
-                "commit_message must follow Conventional Commits using one of "
-                "feat, fix, refactor, test, docs, chore, or ci"
-            )
-        return normalized
+        return validate_conventional_title(value)
 
 
 class ApproveDeliveryOutput(OrchestratorModel):
@@ -90,6 +95,42 @@ class ApproveDeliveryOutput(OrchestratorModel):
     version: int
     delivery_task_id: UUID
     delivery_task_status: TaskStatus
+    message: str
+
+
+class ApprovePublishInput(OrchestratorModel):
+    run_id: UUID
+    expected_version: int = Field(ge=1)
+    title: str = Field(min_length=1, max_length=256)
+    body: str = Field(default="", max_length=60_000)
+    draft: Literal[True] = True
+    notes: str | None = Field(default=None, max_length=4_000)
+
+    @field_validator("title")
+    @classmethod
+    def validate_title(cls, value: str) -> str:
+        return validate_conventional_title(value)
+
+
+class ApprovePublishOutput(OrchestratorModel):
+    run_id: UUID
+    status: RunStatus
+    version: int
+    publish_task_id: UUID
+    publish_task_status: TaskStatus
+    message: str
+
+
+class FinishRunInput(OrchestratorModel):
+    run_id: UUID
+    expected_version: int = Field(ge=1)
+    notes: str | None = Field(default=None, max_length=4_000)
+
+
+class FinishRunOutput(OrchestratorModel):
+    run_id: UUID
+    status: RunStatus
+    version: int
     message: str
 
 
