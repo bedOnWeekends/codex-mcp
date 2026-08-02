@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from .ponytail import append_policy, implementation_policy
 from .schemas import Repository, Run, Task, TaskKind
 
 
@@ -27,7 +28,7 @@ def build_task_prompt(
             "merge, push, deploy, or access live trading credentials."
         )
     )
-    return (
+    prompt = (
         "You are a worker in a durable coding orchestration system.\n"
         f"Repository: {repository.name}\n"
         f"Registered repository: {repository.root_path}\n"
@@ -41,3 +42,6 @@ def build_task_prompt(
         f"Task kind: {task.kind.value}\n"
         f"Task instruction:\n{task.instruction}\n"
     )
+    if task.kind in {TaskKind.IMPLEMENT, TaskKind.FIX}:
+        return append_policy(prompt, implementation_policy())
+    return prompt
