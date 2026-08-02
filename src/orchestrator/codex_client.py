@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, cast
+from typing import Protocol
+from uuid import uuid4
 
 
 class CodexSdkUnavailableError(RuntimeError):
@@ -17,10 +19,26 @@ class CodexRunResult:
     output_tokens: int = 0
 
 
-class CodexClient:
-    """Thin adapter around openai-codex. SDK imports are delayed for CLI startup."""
+class CodexRunner(Protocol):
+    async def run(
+        self,
+        *,
+        prompt: str,
+        cwd: Path,
+        thread_id: str | None = None,
+    ) -> CodexRunResult: ...
 
-    def __init__(self, *, model: str | None, approval_policy: str, sandbox_mode: str) -> None:
+
+class CodexClient:
+    """Typed adapter around the official asynchronous OpenAI Codex SDK."""
+
+    def __init__(
+        self,
+        *,
+        model: str | None,
+        approval_policy: str,
+        sandbox_mode: str,
+    ) -> None:
         self.model = model
         self.approval_policy = approval_policy
         self.sandbox_mode = sandbox_mode
@@ -33,42 +51,115 @@ class CodexClient:
         thread_id: str | None = None,
     ) -> CodexRunResult:
         try:
-            from codex import Codex  # type: ignore[import-not-found]
-        except ImportError:
-            try:
-                from openai_codex import Codex  # type: ignore[import-not-found,no-redef]
-            except ImportError as exc:
-                raise CodexSdkUnavailableError(
-                    "Could not import the openai-codex SDK. Reinstall project dependencies "
-                    "and verify the package's import name in the installed version."
-                ) from exc
+            from openai_codex import ApprovalMode, AsyncCodex, Sandbox
+        except ImportError as exc:
+            raise CodexSdkUnavailableError(
+                "Could not import the official openai-codex SDK. Reinstall project "
+                "dependencies with `python -m pip install -e .`."
+            ) from exc
 
+        approval_mode = self._approval_mode(
+            value=self.approval_policy,
+            deny_all=ApprovalMode.deny_all,
+            auto_review=ApprovalMode.auto_review,
+        )
+        sandbox = self._sandbox(
+            value=self.sandbox_mode,
+            read_only=Sandbox.read_only,
+            workspace_write=Sandbox.workspace_write,
+        )
+        cwd_text = str(cwd.resolve())
 
+        async with AsyncCodex() as codex:
+            if thread_id:
+                thread = await codex.thread_resume(
+                    thread_id,
+                    approval_mode=approval_mode,
+                    cwd=cwd_text,
+                    model=self.model,
+                    sandbox=sandbox,
+                )
+            else:
+                thread = await codex.thread_start(
+                    approval_mode=approval_mode,
+                    cwd=cwd_text,
+                    model=self.model,
+                    sandbox=sandbox,
+                )
 
-        options: dict[str, Any] = {
-            "approval_policy": self.approval_policy,
-            "sandbox_mode": self.sandbox_mode,
-        }
+            result = await thread.run(
+                prompt,
+                approval_mode=approval_mode,
+                cwd=cwd_text,
+                model=self.model,
+                sandbox=sandbox,
+            )
 
-        if self.model:
-            options["model"] = self.model
-
-        client = cast(Any, Codex(options))
-
-        thread = (
-            await client.resume_thread(thread_id)
-            if thread_id
-            else await client.start_thread()
+        usage = result.usage.last if result.usage is not None else None
+        return CodexRunResult(
+            thread_id=thread.id,
+            text=result.final_response or "",
+            input_tokens=usage.input_tokens if usage is not None else 0,
+            output_tokens=usage.output_tokens if usage is not None else 0,
         )
 
-        result = await thread.run(prompt)
+    @staticmethod
+    def _approval_mode[ApprovalT](
+        *,
+        value: str,
+        deny_all: ApprovalT,
+        auto_review: ApprovalT,
+    ) -> ApprovalT:
+        normalized = value.strip().lower().replace("-", "_")
+        if normalized in {"never", "deny_all"}:
+            return deny_all
+        if normalized in {"auto_review", "on_request"}:
+            return auto_review
+        raise ValueError(
+            "Unsupported Codex approval policy. Use 'deny_all' or 'auto_review'."
+        )
 
-        resolved_thread_id = str(getattr(result, "thread_id", None) or "")
-        text = str(getattr(result, "text", None) or result)
-        usage = getattr(result, "usage", None)
+    @staticmethod
+    def _sandbox[SandboxT](
+        *,
+        value: str,
+        read_only: SandboxT,
+        workspace_write: SandboxT,
+    ) -> SandboxT:
+        normalized = value.strip().lower().replace("_", "-")
+        if normalized == "read-only":
+            return read_only
+        if normalized == "workspace-write":
+            return workspace_write
+        raise ValueError(
+            "Unsupported Codex sandbox mode. Use 'read-only' or 'workspace-write'."
+        )
+
+
+class FakeCodexClient:
+    """Deterministic, zero-cost Codex substitute for local end-to-end testing."""
+
+    def __init__(self, *, delay_seconds: float = 0.0) -> None:
+        self.delay_seconds = delay_seconds
+
+    async def run(
+        self,
+        *,
+        prompt: str,
+        cwd: Path,
+        thread_id: str | None = None,
+    ) -> CodexRunResult:
+        if self.delay_seconds:
+            await asyncio.sleep(self.delay_seconds)
+        task_kind = "unknown"
+        for line in prompt.splitlines():
+            if line.startswith("Task kind: "):
+                task_kind = line.partition(": ")[2].strip()
+                break
         return CodexRunResult(
-            thread_id=resolved_thread_id,
-            text=text,
-            input_tokens=int(getattr(usage, "input_tokens", 0) or 0),
-            output_tokens=int(getattr(usage, "output_tokens", 0) or 0),
+            thread_id=thread_id or f"fake-thread-{uuid4()}",
+            text=(
+                f"Fake Codex completed task kind '{task_kind}' in {cwd}. "
+                "No external model call was made and no files were modified."
+            ),
         )

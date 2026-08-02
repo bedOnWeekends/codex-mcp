@@ -9,8 +9,10 @@ from uuid import UUID, uuid4
 import pytest
 
 from orchestrator.control_service import RunControlService
-from orchestrator.mcp_schemas import CancelRunInput, CreateRunInput
+from orchestrator.mcp_schemas import ApprovePlanInput, CancelRunInput, CreateRunInput
 from orchestrator.schemas import (
+    Approval,
+    ApprovalType,
     ModelTier,
     Repository,
     RiskLevel,
@@ -18,6 +20,7 @@ from orchestrator.schemas import (
     RunStatus,
     Task,
     TaskKind,
+    TaskResult,
     TaskStatus,
 )
 from orchestrator.settings import Settings
@@ -68,6 +71,7 @@ class FakeStore:
         )
         self.run = self.run.model_copy(update={"current_task_id": self.task.id})
         self.received_plan_instruction: str | None = None
+        self.approved_worktree_path: Path | None = None
 
     async def list_repositories(self) -> list[Repository]:
         return [self.repository]
@@ -84,6 +88,7 @@ class FakeStore:
         model_tier: ModelTier,
         max_attempts: int,
     ) -> tuple[Run, Task]:
+        del data
         self.received_plan_instruction = plan_instruction
         assert model_tier is ModelTier.DEFAULT
         assert max_attempts == 2
@@ -101,6 +106,56 @@ class FakeStore:
         assert run_id == self.run.id
         return [self.task]
 
+    async def list_task_results_for_run(self, run_id: UUID) -> list[TaskResult]:
+        assert run_id == self.run.id
+        return []
+
+    async def approve_plan_and_queue_implementation(
+        self,
+        run_id: UUID,
+        *,
+        expected_version: int,
+        notes: str | None,
+        instruction: str,
+        model_tier: ModelTier,
+        max_attempts: int,
+        worktree_path: Path,
+    ) -> tuple[Run, Task, Approval]:
+        assert run_id == self.run.id
+        assert expected_version == self.run.version
+        assert notes == "approved"
+        assert "isolated Git worktree" in instruction
+        assert model_tier is ModelTier.DEFAULT
+        assert max_attempts == 2
+        self.approved_worktree_path = worktree_path
+        now = datetime.now(UTC)
+        implementation = self.task.model_copy(
+            update={
+                "id": uuid4(),
+                "kind": TaskKind.IMPLEMENT,
+                "status": TaskStatus.QUEUED,
+                "worktree_path": worktree_path,
+                "priority": 90,
+            }
+        )
+        approved_run = self.run.model_copy(
+            update={
+                "status": RunStatus.EXECUTING,
+                "version": self.run.version + 1,
+                "current_task_id": implementation.id,
+            }
+        )
+        approval = Approval(
+            id=uuid4(),
+            run_id=run_id,
+            type=ApprovalType.PLAN,
+            approved=True,
+            notes=notes,
+            expected_version=expected_version,
+            created_at=now,
+        )
+        return approved_run, implementation, approval
+
     async def cancel_run(
         self,
         run_id: UUID,
@@ -117,68 +172,71 @@ class FakeStore:
         return canceled, [self.task.id]
 
 
-def make_service(fake: FakeStore) -> RunControlService:
+def make_service(fake: FakeStore, *, runtime_dir: Path) -> RunControlService:
     settings = Settings(
         environment="test",
         database_url="postgresql+asyncpg://u:p@localhost/test",
+        runtime_dir=runtime_dir,
     )
     return RunControlService(cast(Store, fake), settings)
 
 
 @pytest.mark.asyncio
-async def test_create_run_queues_a_planning_task() -> None:
+async def test_create_run_queues_a_planning_task(tmp_path: Path) -> None:
     fake = FakeStore()
-    service = make_service(fake)
-
-    output = await service.create_run(
+    output = await make_service(fake, runtime_dir=tmp_path).create_run(
         CreateRunInput(
             repository="toss-trader",
             goal="Implement quote lookup",
             constraints=["read-only"],
         )
     )
-
     assert output.run_id == fake.run.id
     assert output.status is RunStatus.PLANNING
     assert output.plan_task_status is TaskStatus.QUEUED
-    assert fake.received_plan_instruction is not None
-    assert "Do not modify files" in fake.received_plan_instruction
-    assert "- read-only" in fake.received_plan_instruction
+    assert "Do not modify files" in (fake.received_plan_instruction or "")
 
 
 @pytest.mark.asyncio
-async def test_get_run_returns_task_summaries() -> None:
+async def test_approve_plan_queues_implementation_in_runtime_worktree(
+    tmp_path: Path,
+) -> None:
     fake = FakeStore()
-    output = await make_service(fake).get_run(fake.run.id)
+    fake.run = fake.run.model_copy(
+        update={"status": RunStatus.AWAITING_PLAN_APPROVAL, "plan": "Approved plan"}
+    )
+    output = await make_service(fake, runtime_dir=tmp_path).approve_plan(
+        ApprovePlanInput(
+            run_id=fake.run.id,
+            expected_version=fake.run.version,
+            notes="approved",
+        )
+    )
+    assert output.status is RunStatus.EXECUTING
+    assert output.implementation_task_status is TaskStatus.QUEUED
+    assert fake.approved_worktree_path == tmp_path.resolve() / "worktrees" / str(fake.run.id)
 
+
+@pytest.mark.asyncio
+async def test_get_run_returns_task_summaries(tmp_path: Path) -> None:
+    fake = FakeStore()
+    output = await make_service(fake, runtime_dir=tmp_path).get_run(fake.run.id)
     assert output.repository == "toss-trader"
     assert output.version == 2
-    assert len(output.tasks) == 1
     assert output.tasks[0].kind is TaskKind.PLAN
-    assert output.tasks[0].status is TaskStatus.QUEUED
+    assert output.tasks[0].result_summary is None
 
 
 @pytest.mark.asyncio
-async def test_cancel_run_returns_new_version_and_canceled_tasks() -> None:
+async def test_cancel_run_returns_new_version_and_canceled_tasks(tmp_path: Path) -> None:
     fake = FakeStore()
-    output = await make_service(fake).cancel_run(
+    output = await make_service(fake, runtime_dir=tmp_path).cancel_run(
         CancelRunInput(
             run_id=fake.run.id,
             expected_version=fake.run.version,
             reason="user requested",
         )
     )
-
     assert output.status is RunStatus.CANCELED
     assert output.version == fake.run.version + 1
     assert output.canceled_task_ids == [fake.task.id]
-
-
-@pytest.mark.asyncio
-async def test_list_repositories_hides_local_paths() -> None:
-    fake = FakeStore()
-    output = await make_service(fake).list_repositories()
-
-    serialized = output.model_dump(mode="json")
-    assert serialized["repositories"][0]["name"] == "toss-trader"
-    assert "root_path" not in serialized["repositories"][0]

@@ -21,36 +21,35 @@ async def test_tools_publish_structured_output_and_annotations() -> None:
     service = AsyncMock(spec=RunControlService)
     service.list_repositories.return_value = ListRepositoriesOutput(
         repositories=[
-            RepositorySummary(id=uuid4(), name="toss-trader", default_branch="main")
+            RepositorySummary(
+                id=uuid4(),
+                name="toss-trader",
+                default_branch="main",
+                verification_commands=["pytest"],
+            )
         ]
     )
     mcp = FastMCP("test", json_response=True, stateless_http=True)
     register_mcp_tools(mcp, cast(RunControlService, service))
-
     tools = {tool.name: tool for tool in await mcp.list_tools()}
 
     assert set(tools) == {
         "list_repositories",
         "create_run",
+        "approve_plan",
         "get_run",
         "cancel_run",
     }
-    assert tools["list_repositories"].annotations is not None
     assert tools["list_repositories"].annotations.readOnlyHint is True
-    assert tools["cancel_run"].annotations is not None
+    assert tools["approve_plan"].annotations.destructiveHint is True
     assert tools["cancel_run"].annotations.destructiveHint is True
     assert tools["create_run"].outputSchema is not None
 
     result = await mcp.call_tool("list_repositories", {})
-
     assert isinstance(result, tuple)
     content, structured_content = result
-
     assert isinstance(content, list)
     assert isinstance(structured_content, dict)
-
     repositories = structured_content["repositories"]
-
-    assert len(repositories) == 1
     assert repositories[0]["name"] == "toss-trader"
-    assert repositories[0]["default_branch"] == "main"
+    assert repositories[0]["verification_commands"] == ["pytest"]

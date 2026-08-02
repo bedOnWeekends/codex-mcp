@@ -1,0 +1,14 @@
+[
+  {
+    "name": "pytest",
+    "command": ["python", "-m", "pytest", "-q"],
+    "timeout_seconds": 300,
+    "env": {}
+  },
+  {
+    "name": "ruff",
+    "command": ["python", "-m", "ruff", "check", "."],
+    "timeout_seconds": 120,
+    "env": {}
+  }
+]

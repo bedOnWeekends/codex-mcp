@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 import logging
-from decimal import Decimal
 from collections.abc import Awaitable
+from decimal import Decimal
 from typing import Any, TypeVar
 from uuid import UUID
 
@@ -13,6 +13,8 @@ from pydantic import ValidationError
 from .control_service import RunControlService
 from .errors import OrchestratorError
 from .mcp_schemas import (
+    ApprovePlanInput,
+    ApprovePlanOutput,
     CancelRunInput,
     CancelRunOutput,
     CreateRunInput,
@@ -65,7 +67,7 @@ def register_mcp_tools(
         title="Create Orchestration Run",
         description=(
             "Create a run for a registered repository and atomically queue a read-only "
-            "planning task. This does not start Codex in phase 2."
+            "planning task. A separate worker processes the durable queue."
         ),
         annotations=ToolAnnotations(
             readOnlyHint=False,
@@ -92,11 +94,39 @@ def register_mcp_tools(
         return await _safe_call("create_run", service.create_run(request))
 
     @mcp.tool(
+        name="approve_plan",
+        title="Approve Plan and Queue Implementation",
+        description=(
+            "Approve a completed plan using the latest run version. This authorizes "
+            "file changes in an isolated Git worktree and queues implementation, but "
+            "does not commit, merge, push, deploy, or trade."
+        ),
+        annotations=ToolAnnotations(
+            readOnlyHint=False,
+            destructiveHint=True,
+            idempotentHint=False,
+            openWorldHint=False,
+        ),
+        structured_output=True,
+    )
+    async def approve_plan(
+        run_id: UUID,
+        expected_version: int,
+        notes: str | None = None,
+    ) -> ApprovePlanOutput:
+        request = ApprovePlanInput(
+            run_id=run_id,
+            expected_version=expected_version,
+            notes=notes,
+        )
+        return await _safe_call("approve_plan", service.approve_plan(request))
+
+    @mcp.tool(
         name="get_run",
         title="Get Orchestration Run",
         description=(
-            "Read the authoritative PostgreSQL state of a run, including its version "
-            "and task summaries."
+            "Read the authoritative PostgreSQL state of a run, including plan, "
+            "version, task results, changed files, and verification commands."
         ),
         annotations=ToolAnnotations(
             readOnlyHint=True,
