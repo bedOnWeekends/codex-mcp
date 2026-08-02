@@ -53,7 +53,7 @@ def test_fake_modes_and_agent_limits_are_safe_defaults(
     assert settings.max_agents_per_run == 8
 
 
-@pytest.mark.parametrize("value", [2, 9])
+@pytest.mark.parametrize("value", [3, 9])
 def test_agent_limit_is_bounded(tmp_path: Path, value: int) -> None:
     with pytest.raises(ValidationError):
         Settings.model_validate(
