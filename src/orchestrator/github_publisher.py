@@ -261,8 +261,7 @@ class LiveGitHubPublisher:
             pull_request_number=number,
             created=created,
             commands_run=[
-                "git push --set-upstream "
-                f"{self.settings.github_remote_name} {branch}",
+                f"git push --set-upstream {self.settings.github_remote_name} {branch}",
                 "GitHub REST: list/create draft pull request",
             ],
         )
