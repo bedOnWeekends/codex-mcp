@@ -114,7 +114,7 @@ class LiveGitHubPublisher:
         transport: httpx.AsyncBaseTransport | None = None,
     ) -> None:
         token = settings.github_token
-        if token is None:
+        if token is None or not token.get_secret_value().strip():
             raise ValueError("ORCH_GITHUB_TOKEN is required in live publish mode")
         self.settings = settings
         self._token: SecretStr = token
