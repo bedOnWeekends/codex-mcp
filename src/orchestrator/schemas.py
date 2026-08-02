@@ -63,6 +63,11 @@ class AgentRole(StrEnum):
     REVIEWER = "reviewer"
 
 
+class ExecutionMode(StrEnum):
+    SINGLE = "single"
+    PARALLEL = "parallel"
+
+
 class AgentAssignmentStatus(StrEnum):
     BLOCKED = "blocked"
     QUEUED = "queued"
@@ -107,10 +112,9 @@ class OrchestratorModel(BaseModel):
 class AgentSpec(OrchestratorModel):
     key: str = Field(pattern=r"^[a-z][a-z0-9-]{1,39}$")
     role: AgentRole
-    instruction: str = Field(min_length=1, max_length=20_000)
-    depends_on: list[str] = Field(default_factory=list, max_length=8)
-    owned_paths: list[str] = Field(default_factory=list, max_length=32)
-    model_tier: ModelTier = ModelTier.DEFAULT
+    instruction: str = Field(min_length=1, max_length=8_000)
+    depends_on: list[str] = Field(default_factory=list, max_length=4)
+    owned_paths: list[str] = Field(default_factory=list, max_length=24)
 
     @field_validator("depends_on")
     @classmethod
@@ -134,6 +138,7 @@ class AgentSpec(OrchestratorModel):
                 or path.is_absolute()
                 or ".." in path.parts
                 or ".git" in path.parts
+                or any(token in candidate for token in ("\x00", ":", "*", "?", "[", "]"))
             ):
                 raise ValueError("owned paths must be safe repository-relative prefixes")
             item = path.as_posix().rstrip("/")
@@ -146,12 +151,16 @@ class AgentSpec(OrchestratorModel):
         if self.role is AgentRole.IMPLEMENTER and not self.owned_paths:
             raise ValueError("implementer agents require at least one owned path")
         if self.role is not AgentRole.IMPLEMENTER and self.owned_paths:
-            raise ValueError("read-only explorer and reviewer agents cannot own paths")
+            raise ValueError("read-only agents cannot own paths")
         return self
 
 
 class AgentPlan(OrchestratorModel):
-    assignments: list[AgentSpec] = Field(min_length=3, max_length=8)
+    mode: ExecutionMode
+    confidence: float = Field(ge=0, le=1)
+    requires_llm_review: bool = False
+    rationale: str = Field(min_length=1, max_length=600)
+    assignments: list[AgentSpec] = Field(min_length=1, max_length=4)
 
     @model_validator(mode="after")
     def validate_dag_and_ownership(self) -> AgentPlan:
@@ -159,16 +168,29 @@ class AgentPlan(OrchestratorModel):
         if len(by_key) != len(self.assignments):
             raise ValueError("agent assignment keys must be unique")
 
+        explorers = [
+            item for item in self.assignments if item.role is AgentRole.EXPLORER
+        ]
         implementers = [
             item for item in self.assignments if item.role is AgentRole.IMPLEMENTER
         ]
         reviewers = [
             item for item in self.assignments if item.role is AgentRole.REVIEWER
         ]
+        if explorers:
+            raise ValueError("the supervisor scout replaces separate explorer agents")
         if not implementers:
             raise ValueError("agent plan requires at least one implementer")
-        if not reviewers:
-            raise ValueError("agent plan requires at least one reviewer")
+        if len(reviewers) > 1:
+            raise ValueError("agent plan allows at most one LLM reviewer")
+        if self.mode is ExecutionMode.SINGLE and len(implementers) != 1:
+            raise ValueError("single mode requires exactly one implementer")
+        if self.mode is ExecutionMode.PARALLEL and not 2 <= len(implementers) <= 3:
+            raise ValueError("parallel mode requires two or three implementers")
+        if self.requires_llm_review != bool(reviewers):
+            raise ValueError(
+                "requires_llm_review must match the presence of one reviewer"
+            )
 
         for item in self.assignments:
             unknown = [key for key in item.depends_on if key not in by_key]
@@ -178,6 +200,12 @@ class AgentPlan(OrchestratorModel):
                 )
             if item.key in item.depends_on:
                 raise ValueError(f"agent {item.key!r} cannot depend on itself")
+        for implementer in implementers:
+            if implementer.depends_on:
+                raise ValueError(
+                    "implementers must be independent; use one implementer when work "
+                    "cannot be split cleanly"
+                )
 
         visiting: set[str] = set()
         visited: set[str] = set()
@@ -198,9 +226,9 @@ class AgentPlan(OrchestratorModel):
 
         implementer_keys = {item.key for item in implementers}
         for reviewer in reviewers:
-            if not implementer_keys.issubset(set(reviewer.depends_on)):
+            if set(reviewer.depends_on) != implementer_keys:
                 raise ValueError(
-                    "reviewer agents must depend on every implementer assignment"
+                    "the reviewer must depend on exactly every implementer assignment"
                 )
 
         ownership: list[tuple[str, str]] = []
@@ -233,6 +261,17 @@ class AgentPlan(OrchestratorModel):
                 completed.add(key)
                 remaining.remove(key)
         return ordered
+
+
+class AgentHandoff(OrchestratorModel):
+    summary: str = Field(min_length=1, max_length=800)
+    risks: list[str] = Field(default_factory=list, max_length=5)
+    tests: list[str] = Field(default_factory=list, max_length=8)
+
+    @field_validator("risks", "tests")
+    @classmethod
+    def trim_entries(cls, values: list[str]) -> list[str]:
+        return [item.strip()[:240] for item in values if item.strip()]
 
 
 def _path_prefixes_overlap(left: str, right: str) -> bool:
