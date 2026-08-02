@@ -8,7 +8,7 @@ from uuid import UUID
 
 from sqlalchemy import func, select
 
-from .db_models import ApprovalModel, TaskModel
+from .db_models import ApprovalModel, RunModel, TaskModel
 from .phase4_store import Phase4Store, ReviewCompletionOutcome
 from .schemas import (
     Approval,
@@ -44,14 +44,11 @@ class Phase5Store(Phase4Store):
         async with self._session_factory.begin() as session:
             model = await session.scalar(
                 select(TaskModel)
-                .join(TaskModel.run)
+                .join(RunModel, RunModel.id == TaskModel.run_id)
                 .where(
                     TaskModel.status == TaskStatus.QUEUED.value,
                     TaskModel.attempt < TaskModel.max_attempts,
-                    TaskModel.run.has(status=active[0])
-                    | TaskModel.run.has(status=active[1])
-                    | TaskModel.run.has(status=active[2])
-                    | TaskModel.run.has(status=active[3]),
+                    RunModel.status.in_(active),
                 )
                 .order_by(TaskModel.priority.desc(), TaskModel.created_at.asc())
                 .with_for_update(skip_locked=True)
