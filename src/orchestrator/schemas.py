@@ -3,18 +3,20 @@ from __future__ import annotations
 from datetime import datetime
 from decimal import Decimal
 from enum import StrEnum
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 class RunStatus(StrEnum):
     CREATED = "created"
     PLANNING = "planning"
     AWAITING_PLAN_APPROVAL = "awaiting_plan_approval"
+    SUPERVISING = "supervising"
     EXECUTING = "executing"
+    INTEGRATING = "integrating"
     VERIFYING = "verifying"
     AWAITING_REVISION = "awaiting_revision"
     AWAITING_DELIVERY_APPROVAL = "awaiting_delivery_approval"
@@ -44,12 +46,30 @@ class RiskLevel(StrEnum):
 
 class TaskKind(StrEnum):
     PLAN = "plan"
+    SUPERVISE = "supervise"
+    AGENT = "agent"
+    INTEGRATE = "integrate"
     EXPLORE = "explore"
     IMPLEMENT = "implement"
     FIX = "fix"
     REVIEW = "review"
     DELIVER = "deliver"
     PUBLISH = "publish"
+
+
+class AgentRole(StrEnum):
+    EXPLORER = "explorer"
+    IMPLEMENTER = "implementer"
+    REVIEWER = "reviewer"
+
+
+class AgentAssignmentStatus(StrEnum):
+    BLOCKED = "blocked"
+    QUEUED = "queued"
+    RUNNING = "running"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    CANCELED = "canceled"
 
 
 class ModelTier(StrEnum):
@@ -67,6 +87,9 @@ class ApprovalType(StrEnum):
 
 class ArtifactKind(StrEnum):
     PLAN = "plan"
+    AGENT_PLAN = "agent_plan"
+    AGENT_DIFF = "agent_diff"
+    INTEGRATION_RECEIPT = "integration_receipt"
     DIFF = "diff"
     STDOUT = "stdout"
     STDERR = "stderr"
@@ -79,6 +102,144 @@ class ArtifactKind(StrEnum):
 
 class OrchestratorModel(BaseModel):
     model_config = ConfigDict(from_attributes=True, extra="forbid")
+
+
+class AgentSpec(OrchestratorModel):
+    key: str = Field(pattern=r"^[a-z][a-z0-9-]{1,39}$")
+    role: AgentRole
+    instruction: str = Field(min_length=1, max_length=20_000)
+    depends_on: list[str] = Field(default_factory=list, max_length=8)
+    owned_paths: list[str] = Field(default_factory=list, max_length=32)
+    model_tier: ModelTier = ModelTier.DEFAULT
+
+    @field_validator("depends_on")
+    @classmethod
+    def normalize_dependencies(cls, values: list[str]) -> list[str]:
+        normalized: list[str] = []
+        for value in values:
+            item = value.strip()
+            if item and item not in normalized:
+                normalized.append(item)
+        return normalized
+
+    @field_validator("owned_paths")
+    @classmethod
+    def normalize_owned_paths(cls, values: list[str]) -> list[str]:
+        normalized: list[str] = []
+        for value in values:
+            candidate = value.strip().replace("\\", "/").removeprefix("./")
+            path = PurePosixPath(candidate)
+            if (
+                not candidate
+                or path.is_absolute()
+                or ".." in path.parts
+                or ".git" in path.parts
+            ):
+                raise ValueError("owned paths must be safe repository-relative prefixes")
+            item = path.as_posix().rstrip("/")
+            if item not in normalized:
+                normalized.append(item)
+        return normalized
+
+    @model_validator(mode="after")
+    def validate_role_contract(self) -> AgentSpec:
+        if self.role is AgentRole.IMPLEMENTER and not self.owned_paths:
+            raise ValueError("implementer agents require at least one owned path")
+        if self.role is not AgentRole.IMPLEMENTER and self.owned_paths:
+            raise ValueError("read-only explorer and reviewer agents cannot own paths")
+        return self
+
+
+class AgentPlan(OrchestratorModel):
+    assignments: list[AgentSpec] = Field(min_length=3, max_length=8)
+
+    @model_validator(mode="after")
+    def validate_dag_and_ownership(self) -> AgentPlan:
+        by_key = {item.key: item for item in self.assignments}
+        if len(by_key) != len(self.assignments):
+            raise ValueError("agent assignment keys must be unique")
+
+        implementers = [
+            item for item in self.assignments if item.role is AgentRole.IMPLEMENTER
+        ]
+        reviewers = [
+            item for item in self.assignments if item.role is AgentRole.REVIEWER
+        ]
+        if not implementers:
+            raise ValueError("agent plan requires at least one implementer")
+        if not reviewers:
+            raise ValueError("agent plan requires at least one reviewer")
+
+        for item in self.assignments:
+            unknown = [key for key in item.depends_on if key not in by_key]
+            if unknown:
+                raise ValueError(
+                    f"agent {item.key!r} has unknown dependencies: {unknown}"
+                )
+            if item.key in item.depends_on:
+                raise ValueError(f"agent {item.key!r} cannot depend on itself")
+
+        visiting: set[str] = set()
+        visited: set[str] = set()
+
+        def visit(key: str) -> None:
+            if key in visiting:
+                raise ValueError("agent dependency graph contains a cycle")
+            if key in visited:
+                return
+            visiting.add(key)
+            for dependency in by_key[key].depends_on:
+                visit(dependency)
+            visiting.remove(key)
+            visited.add(key)
+
+        for key in by_key:
+            visit(key)
+
+        implementer_keys = {item.key for item in implementers}
+        for reviewer in reviewers:
+            if not implementer_keys.issubset(set(reviewer.depends_on)):
+                raise ValueError(
+                    "reviewer agents must depend on every implementer assignment"
+                )
+
+        ownership: list[tuple[str, str]] = []
+        for assignment in implementers:
+            for path in assignment.owned_paths:
+                for owner_key, owner_path in ownership:
+                    if _path_prefixes_overlap(path, owner_path):
+                        raise ValueError(
+                            "implementer path ownership overlaps between "
+                            f"{owner_key!r} and {assignment.key!r}"
+                        )
+                ownership.append((assignment.key, path))
+        return self
+
+    def topological_order(self) -> list[AgentSpec]:
+        by_key = {item.key: item for item in self.assignments}
+        remaining = set(by_key)
+        ordered: list[AgentSpec] = []
+        completed: set[str] = set()
+        while remaining:
+            ready = sorted(
+                key
+                for key in remaining
+                if set(by_key[key].depends_on).issubset(completed)
+            )
+            if not ready:
+                raise ValueError("agent dependency graph contains a cycle")
+            for key in ready:
+                ordered.append(by_key[key])
+                completed.add(key)
+                remaining.remove(key)
+        return ordered
+
+
+def _path_prefixes_overlap(left: str, right: str) -> bool:
+    left_parts = PurePosixPath(left).parts
+    right_parts = PurePosixPath(right).parts
+    shorter = min(len(left_parts), len(right_parts))
+    return left_parts[:shorter] == right_parts[:shorter]
 
 
 class VerificationCommandSpec(OrchestratorModel):
@@ -162,6 +323,30 @@ class Task(TaskCreate):
     id: UUID
     status: TaskStatus
     attempt: int
+    input_tokens: int
+    output_tokens: int
+    estimated_cost_usd: Decimal
+    started_at: datetime | None = None
+    completed_at: datetime | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class AgentAssignment(OrchestratorModel):
+    id: UUID
+    run_id: UUID
+    task_id: UUID | None = None
+    key: str
+    role: AgentRole
+    status: AgentAssignmentStatus
+    instruction: str
+    depends_on: list[str]
+    owned_paths: list[str]
+    model_tier: ModelTier
+    worktree_path: Path | None = None
+    codex_thread_id: str | None = None
+    commit_sha: str | None = None
+    changed_files: list[str]
     input_tokens: int
     output_tokens: int
     estimated_cost_usd: Decimal
