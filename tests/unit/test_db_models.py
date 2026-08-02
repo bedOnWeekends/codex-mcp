@@ -10,4 +10,5 @@ def test_phase_one_tables_are_registered() -> None:
         "approvals",
         "artifacts",
         "events",
+        "agent_assignments",
     }
