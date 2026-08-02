@@ -21,6 +21,7 @@ async def test_fake_codex_client_never_calls_external_model(tmp_path: Path) -> N
     assert "No external model call" in result.text
     assert result.input_tokens == 0
     assert result.cached_input_tokens == 0
+    assert result.cache_write_tokens == 0
     assert result.output_tokens == 0
 
 
@@ -42,6 +43,7 @@ async def test_live_adapter_passes_effort_schema_and_usage(
     class FakeUsageBreakdown:
         input_tokens = 17
         cached_input_tokens = 11
+        cache_write_tokens = 3
         output_tokens = 5
 
     class FakeUsage:
@@ -95,6 +97,7 @@ async def test_live_adapter_passes_effort_schema_and_usage(
     assert result.text == "implemented"
     assert result.input_tokens == 17
     assert result.cached_input_tokens == 11
+    assert result.cache_write_tokens == 3
     assert result.output_tokens == 5
     assert [name for name, _ in calls] == ["enter", "thread_start", "run", "exit"]
     _, raw_run_call = calls[2]
