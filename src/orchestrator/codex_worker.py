@@ -168,7 +168,7 @@ class CodexWorker:
             run_id=run.id,
             path=task.worktree_path,
         )
-        diff_before = await self.worktrees.diff(workspace_info.path)
+        snapshot_before = await self.worktrees.snapshot(workspace_info.path)
         verification = await self.verifier.run(
             cwd=workspace_info.path,
             configured_commands=repository.verification_config,
@@ -183,8 +183,8 @@ class CodexWorker:
         )
         if not verification.success:
             raise RuntimeError("delivery verification failed")
-        diff_after = await self.worktrees.diff(workspace_info.path)
-        if diff_after != diff_before:
+        snapshot_after = await self.worktrees.snapshot(workspace_info.path)
+        if snapshot_after != snapshot_before:
             raise RuntimeError("verification commands modified the delivery worktree")
 
         commit = await self.worktrees.commit_verified_changes(
