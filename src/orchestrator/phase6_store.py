@@ -166,7 +166,7 @@ class Phase6Store(Phase5Store):
                         ["run.delivery_committed", "run.delivery_noop"]
                     ),
                 )
-                .order_by(EventModel.created_at.desc())
+                .order_by(EventModel.created_at.desc(), EventModel.id.desc())
                 .limit(1)
             )
             if delivery_event is None:
