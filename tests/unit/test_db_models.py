@@ -1,7 +1,9 @@
+from orchestrator.automation_store import AutomationRunModel
 from orchestrator.db_models import Base
 
 
-def test_phase_one_tables_are_registered() -> None:
+def test_orchestrator_tables_are_registered() -> None:
+    assert AutomationRunModel.metadata is Base.metadata
     assert set(Base.metadata.tables) == {
         "repositories",
         "runs",
@@ -11,4 +13,5 @@ def test_phase_one_tables_are_registered() -> None:
         "artifacts",
         "events",
         "agent_assignments",
+        "automation_runs",
     }
