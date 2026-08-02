@@ -4,6 +4,7 @@ from uuid import uuid4
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from pydantic import SecretStr
 
 from orchestrator.api_schemas import AutomationStatus, StartAutomatedRunOutput
 from orchestrator.rest_api import build_api_router
@@ -32,7 +33,7 @@ def make_app() -> tuple[FastAPI, FakeCoordinator]:
         environment="test",
         database_url="postgresql+asyncpg://u:p@localhost/test",
         api_enabled=True,
-        api_key="x" * 32,
+        api_key=SecretStr("x" * 32),
     )
     coordinator = FakeCoordinator()
     app = FastAPI()
