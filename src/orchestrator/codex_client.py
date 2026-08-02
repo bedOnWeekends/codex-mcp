@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Protocol
+from typing import Protocol, cast
 from uuid import uuid4
 
 from openai_codex.types import JsonObject
@@ -33,7 +33,7 @@ class CodexRunner(Protocol):
         prompt: str,
         cwd: Path,
         thread_id: str | None = None,
-        output_schema: JsonObject | None = None,
+        output_schema: dict[str, object] | None = None,
     ) -> CodexRunResult: ...
 
 
@@ -59,7 +59,7 @@ class CodexClient:
         prompt: str,
         cwd: Path,
         thread_id: str | None = None,
-        output_schema: JsonObject | None = None,
+        output_schema: dict[str, object] | None = None,
     ) -> CodexRunResult:
         try:
             from openai_codex import ApprovalMode, AsyncCodex, Sandbox
@@ -80,6 +80,7 @@ class CodexClient:
             workspace_write=Sandbox.workspace_write,
         )
         cwd_text = str(cwd.resolve())
+        sdk_output_schema = cast(JsonObject | None, output_schema)
 
         async with AsyncCodex() as codex:
             if thread_id:
@@ -104,7 +105,7 @@ class CodexClient:
                 cwd=cwd_text,
                 effort=self.effort,
                 model=self.model,
-                output_schema=output_schema,
+                output_schema=sdk_output_schema,
                 sandbox=sandbox,
             )
 
@@ -167,7 +168,7 @@ class FakeCodexClient:
         prompt: str,
         cwd: Path,
         thread_id: str | None = None,
-        output_schema: JsonObject | None = None,
+        output_schema: dict[str, object] | None = None,
     ) -> CodexRunResult:
         del output_schema
         if self.delay_seconds:
