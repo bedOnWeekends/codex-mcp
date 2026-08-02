@@ -75,7 +75,7 @@ async def test_worktree_is_isolated_and_reports_changes(tmp_path: Path) -> None:
 
 @pytest.mark.skipif(shutil.which("git") is None, reason="git is required")
 @pytest.mark.asyncio
-async def test_agent_retry_amends_one_cumulative_commit_and_integrates_once(
+async def test_agent_retry_amends_and_integration_creates_one_delivery_commit(
     tmp_path: Path,
 ) -> None:
     root = tmp_path / "repo"
@@ -126,20 +126,30 @@ async def test_agent_retry_amends_one_cumulative_commit_and_integrates_once(
         run_id=run_id,
         path=tmp_path / "worktrees" / str(run_id),
     )
-    integrated = await manager.apply_commits(integration.path, [amended.sha])
-    repeated = await manager.apply_commits(integration.path, [amended.sha])
+    staged = await manager.integrate_commits(integration.path, [amended.sha])
+    delivery = await manager.commit_verified_changes(
+        integration.path,
+        message="feat: integrate agent changes",
+        run_id=run_id,
+    )
 
     assert first.sha != amended.sha
     assert amended.changed_files == ["src/feature.py", "src/retry.py"]
     assert reused.sha == amended.sha
     assert reused.reused is True
-    assert integrated.applied_commits == [amended.sha]
-    assert integrated.changed_files == ["src/feature.py", "src/retry.py"]
-    assert repeated.applied_commits == []
-    assert repeated.changed_files == ["src/feature.py", "src/retry.py"]
+    assert staged.applied_commits == [amended.sha]
+    assert staged.changed_files == ["src/feature.py", "src/retry.py"]
+    assert delivery.changed_files == ["src/feature.py", "src/retry.py"]
     assert (integration.path / "src" / "feature.py").exists()
     assert (integration.path / "src" / "retry.py").exists()
     assert not (root / "src" / "feature.py").exists()
+    commit_count = subprocess.run(
+        ["git", "-C", str(integration.path), "rev-list", "--count", "HEAD"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    assert commit_count == "2"
 
 
 @pytest.mark.skipif(shutil.which("git") is None, reason="git is required")
