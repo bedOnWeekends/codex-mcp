@@ -129,7 +129,9 @@ def build_application(settings: Settings) -> OrchestratorApplication:
             else None
         ),
         redoc_url=None,
-        openapi_url=(f"{settings.api_prefix}/openapi.json" if settings.api_enabled else None),
+        openapi_url=(
+            f"{settings.api_prefix}/openapi.json" if settings.api_enabled else None
+        ),
         lifespan=lifespan,
     )
     if settings.api_enabled:
