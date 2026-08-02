@@ -13,20 +13,21 @@ from starlette.responses import JSONResponse
 from .control_service import RunControlService
 from .database import Database, create_database
 from .mcp_tools import register_mcp_tools
-from .phase6_store import Phase6Store
+from .phase7_store import Phase7Store
 from .settings import Settings
 
 SERVER_INSTRUCTIONS = """
 Use list_repositories before create_run. create_run queues a read-only planning task.
-Use get_run to read the authoritative status and version. Only call approve_plan after
-the run reaches awaiting_plan_approval and pass the latest version. Approval authorizes
-changes only in an isolated Git worktree. After verification passes, approve_delivery
-reruns verification and creates one local commit. The run then reaches
-awaiting_publish_approval. Use finish_run to keep the result local, or approve_publish
-with the latest version and a Conventional Commit title. In live publication mode only,
-the worker pushes the isolated run branch to its registered GitHub origin and creates
-or reuses a pull request. It never merges, deploys, or trades. cancel_run also requires
-the latest version. Phase 6 workers execute all queued work outside the MCP server.
+Use get_run to read the authoritative run version, task state, and agent assignments.
+Only call approve_plan after awaiting_plan_approval. Approval queues a read-only
+supervisor that creates a validated dependency DAG with explorer, implementer, and
+reviewer agents. Ready agents execute in independent Git worktrees and Codex threads.
+Implementers have non-overlapping path ownership. The integrator cherry-picks completed
+agent commits into the run worktree; conflicts and ownership violations fail safely.
+The existing verification, delivery, and publication approval boundaries remain in
+place. The orchestrator never force-pushes, merges, deploys, or trades. cancel_run and
+all approvals require the latest run version. Phase 7 workers execute queued work
+outside the MCP server process.
 """.strip()
 
 
@@ -34,7 +35,7 @@ the latest version. Phase 6 workers execute all queued work outside the MCP serv
 class OrchestratorApplication:
     settings: Settings
     database: Database
-    store: Phase6Store
+    store: Phase7Store
     service: RunControlService
     mcp: FastMCP[Any]
     asgi_app: Starlette
@@ -43,7 +44,7 @@ class OrchestratorApplication:
 def build_application(settings: Settings) -> OrchestratorApplication:
     settings.ensure_runtime_directories()
     database = create_database(settings)
-    store = Phase6Store(database.session_factory)
+    store = Phase7Store(database.session_factory)
     service = RunControlService(store, settings)
     mcp: FastMCP[Any] = FastMCP(
         name=settings.app_name,
