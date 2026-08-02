@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 from dataclasses import dataclass
 from pathlib import Path
 from uuid import UUID
@@ -118,6 +119,25 @@ class GitWorktreeManager:
             f"# - {item}" for item in untracked.splitlines()
         )
         return diff + suffix + "\n"
+
+    async def snapshot(self, path: Path) -> str:
+        status = await self._git_text(path, "status", "--porcelain=v1")
+        digest = hashlib.sha256(status.encode("utf-8", errors="replace"))
+        for relative_path in sorted(await self.changed_files(path)):
+            digest.update(b"\0path\0")
+            digest.update(relative_path.encode("utf-8", errors="replace"))
+            candidate = path / relative_path
+            if candidate.is_symlink():
+                digest.update(b"\0symlink\0")
+                digest.update(str(candidate.readlink()).encode("utf-8", errors="replace"))
+            elif candidate.is_file():
+                digest.update(b"\0file\0")
+                digest.update(candidate.read_bytes())
+            elif candidate.exists():
+                digest.update(b"\0other\0")
+            else:
+                digest.update(b"\0missing\0")
+        return digest.hexdigest()
 
     async def commit_verified_changes(
         self,
