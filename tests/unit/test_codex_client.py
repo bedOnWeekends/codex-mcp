@@ -14,15 +14,17 @@ async def test_fake_codex_client_never_calls_external_model(tmp_path: Path) -> N
     result = await FakeCodexClient().run(
         prompt="Task kind: plan\nInspect only.",
         cwd=tmp_path,
+        output_schema={"type": "object"},
     )
     assert result.thread_id.startswith("fake-thread-")
     assert "No external model call" in result.text
     assert result.input_tokens == 0
+    assert result.cached_input_tokens == 0
     assert result.output_tokens == 0
 
 
 @pytest.mark.asyncio
-async def test_live_adapter_uses_official_async_sdk_surface(
+async def test_live_adapter_passes_effort_schema_and_usage(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -38,6 +40,7 @@ async def test_live_adapter_uses_official_async_sdk_surface(
 
     class FakeUsageBreakdown:
         input_tokens = 17
+        cached_input_tokens = 11
         output_tokens = 5
 
     class FakeUsage:
@@ -75,17 +78,27 @@ async def test_live_adapter_uses_official_async_sdk_surface(
             Sandbox=FakeSandbox,
         ),
     )
+    schema = {"type": "object", "properties": {"summary": {"type": "string"}}}
     result = await CodexClient(
         model="gpt-test",
+        effort="high",
         approval_policy="never",
         sandbox_mode="workspace-write",
-    ).run(prompt="make a safe change", cwd=tmp_path)
+    ).run(
+        prompt="make a safe change",
+        cwd=tmp_path,
+        output_schema=schema,
+    )
 
     assert result.thread_id == "thr-new"
     assert result.text == "implemented"
     assert result.input_tokens == 17
+    assert result.cached_input_tokens == 11
     assert result.output_tokens == 5
     assert [name for name, _ in calls] == ["enter", "thread_start", "run", "exit"]
+    run_kwargs = calls[2][1][1]
+    assert run_kwargs["effort"] == "high"
+    assert run_kwargs["output_schema"] == schema
 
 
 @pytest.mark.asyncio
@@ -134,7 +147,8 @@ async def test_live_adapter_resumes_existing_thread(
         ),
     )
     result = await CodexClient(
-        model=None,
+        model="gpt-test",
+        effort="medium",
         approval_policy="auto_review",
         sandbox_mode="read-only",
     ).run(prompt="continue", cwd=tmp_path, thread_id="thr-existing")
