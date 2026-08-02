@@ -66,6 +66,14 @@ def projected_call_cost(settings: Settings, tier: ModelTier) -> Decimal:
     return settings.projected_call_cost_usd_default
 
 
+def projected_call_tokens(settings: Settings, tier: ModelTier) -> int:
+    if tier is ModelTier.CHEAP:
+        return settings.projected_call_tokens_cheap
+    if tier is ModelTier.CRITICAL:
+        return settings.projected_call_tokens_critical
+    return settings.projected_call_tokens_default
+
+
 def _rates(
     settings: Settings,
     tier: ModelTier,
