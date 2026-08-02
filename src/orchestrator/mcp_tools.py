@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Awaitable
 from decimal import Decimal
-from typing import Any, TypeVar
+from typing import Any
 from uuid import UUID
 
 from mcp.server.fastmcp import FastMCP
@@ -25,10 +25,9 @@ from .mcp_schemas import (
 from .schemas import RiskLevel
 
 logger = logging.getLogger(__name__)
-T = TypeVar("T")
 
 
-async def _safe_call(operation: str, awaitable: Awaitable[T]) -> T:
+async def _safe_call[T](operation: str, awaitable: Awaitable[T]) -> T:
     try:
         return await awaitable
     except (OrchestratorError, ValidationError, ValueError) as exc:
