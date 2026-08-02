@@ -7,6 +7,7 @@ import pytest
 from pydantic import ValidationError
 
 from orchestrator.multi_agent import (
+    enforce_adaptive_policy,
     fake_agent_plan,
     parse_agent_plan,
     validate_agent_changes,
@@ -17,52 +18,51 @@ from orchestrator.schemas import (
     AgentPlan,
     AgentRole,
     AgentSpec,
+    ExecutionMode,
     ModelTier,
+    RiskLevel,
+    Run,
+    RunStatus,
 )
 
 
-def test_fake_agent_plan_fans_out_parallel_implementers() -> None:
+def test_fake_agent_plan_uses_single_agent_cheapest_path() -> None:
     plan = fake_agent_plan()
-    assert [item.key for item in plan.topological_order()] == [
-        "explore-codebase",
-        "implement-source",
-        "implement-tests",
-        "review-integration",
-    ]
-    reviewer = plan.assignments[-1]
-    assert set(reviewer.depends_on) == {"implement-source", "implement-tests"}
+    assert plan.mode is ExecutionMode.SINGLE
+    assert plan.requires_llm_review is False
+    assert [item.key for item in plan.topological_order()] == ["implement-change"]
 
 
-def test_agent_plan_rejects_cycles() -> None:
-    with pytest.raises(ValidationError, match="cycle"):
+def test_agent_plan_rejects_sequential_implementers() -> None:
+    with pytest.raises(ValidationError, match="independent"):
         AgentPlan(
+            mode=ExecutionMode.PARALLEL,
+            confidence=0.9,
+            rationale="Attempted sequential split.",
             assignments=[
                 AgentSpec(
-                    key="explore-codebase",
-                    role=AgentRole.EXPLORER,
-                    instruction="Explore.",
-                    depends_on=["review-core"],
-                ),
-                AgentSpec(
-                    key="implement-core",
+                    key="implement-api",
                     role=AgentRole.IMPLEMENTER,
-                    instruction="Implement.",
-                    depends_on=["explore-codebase"],
-                    owned_paths=["src"],
+                    instruction="Implement API.",
+                    owned_paths=["src/api"],
                 ),
                 AgentSpec(
-                    key="review-core",
-                    role=AgentRole.REVIEWER,
-                    instruction="Review.",
-                    depends_on=["implement-core", "explore-codebase"],
+                    key="implement-ui",
+                    role=AgentRole.IMPLEMENTER,
+                    instruction="Implement UI.",
+                    depends_on=["implement-api"],
+                    owned_paths=["src/ui"],
                 ),
-            ]
+            ],
         )
 
 
 def test_agent_plan_rejects_overlapping_implementer_paths() -> None:
     with pytest.raises(ValidationError, match="overlaps"):
         AgentPlan(
+            mode=ExecutionMode.PARALLEL,
+            confidence=0.9,
+            rationale="Paths overlap.",
             assignments=[
                 AgentSpec(
                     key="implement-api",
@@ -76,19 +76,17 @@ def test_agent_plan_rejects_overlapping_implementer_paths() -> None:
                     instruction="Implement client.",
                     owned_paths=["src/api/client"],
                 ),
-                AgentSpec(
-                    key="review-core",
-                    role=AgentRole.REVIEWER,
-                    instruction="Review.",
-                    depends_on=["implement-api", "implement-api-client"],
-                ),
-            ]
+            ],
         )
 
 
-def test_reviewer_must_depend_on_all_implementers() -> None:
-    with pytest.raises(ValidationError, match="every implementer"):
+def test_reviewer_must_depend_on_exactly_all_implementers() -> None:
+    with pytest.raises(ValidationError, match="exactly every implementer"):
         AgentPlan(
+            mode=ExecutionMode.PARALLEL,
+            confidence=0.5,
+            requires_llm_review=True,
+            rationale="Review required.",
             assignments=[
                 AgentSpec(
                     key="implement-api",
@@ -108,8 +106,64 @@ def test_reviewer_must_depend_on_all_implementers() -> None:
                     instruction="Review.",
                     depends_on=["implement-api"],
                 ),
-            ]
+            ],
         )
+
+
+def test_low_confidence_plan_gets_one_reviewer() -> None:
+    plan = AgentPlan(
+        mode=ExecutionMode.SINGLE,
+        confidence=0.4,
+        rationale="Repository evidence is incomplete.",
+        assignments=[
+            AgentSpec(
+                key="implement-core",
+                role=AgentRole.IMPLEMENTER,
+                instruction="Implement.",
+                owned_paths=["src"],
+            )
+        ],
+    )
+    routed = enforce_adaptive_policy(
+        plan,
+        make_run(RiskLevel.NORMAL),
+        confidence_threshold=0.72,
+    )
+    assert routed.requires_llm_review is True
+    assert [item.role for item in routed.topological_order()] == [
+        AgentRole.IMPLEMENTER,
+        AgentRole.REVIEWER,
+    ]
+
+
+def test_high_confidence_low_risk_plan_drops_optional_reviewer() -> None:
+    plan = AgentPlan(
+        mode=ExecutionMode.SINGLE,
+        confidence=0.95,
+        requires_llm_review=True,
+        rationale="The change is localized.",
+        assignments=[
+            AgentSpec(
+                key="implement-core",
+                role=AgentRole.IMPLEMENTER,
+                instruction="Implement.",
+                owned_paths=["src"],
+            ),
+            AgentSpec(
+                key="review-core",
+                role=AgentRole.REVIEWER,
+                instruction="Review.",
+                depends_on=["implement-core"],
+            ),
+        ],
+    )
+    routed = enforce_adaptive_policy(
+        plan,
+        make_run(RiskLevel.LOW),
+        confidence_threshold=0.72,
+    )
+    assert routed.requires_llm_review is False
+    assert len(routed.assignments) == 1
 
 
 def test_parse_agent_plan_accepts_markdown_json_fence() -> None:
@@ -138,6 +192,23 @@ def test_read_only_agent_cannot_modify_files(tmp_path: Path) -> None:
         validate_agent_changes(assignment, ["README.md"])
 
 
+def make_run(risk: RiskLevel) -> Run:
+    now = datetime.now(UTC)
+    return Run(
+        id=uuid4(),
+        repository_id=uuid4(),
+        goal="Implement a focused change",
+        constraints=[],
+        risk_level=risk,
+        max_cost_usd=Decimal("3"),
+        status=RunStatus.SUPERVISING,
+        spent_cost_usd=Decimal("0"),
+        version=1,
+        created_at=now,
+        updated_at=now,
+    )
+
+
 def make_assignment(
     tmp_path: Path,
     *,
@@ -154,7 +225,11 @@ def make_assignment(
         instruction="Complete the assigned scope.",
         depends_on=[],
         owned_paths=owned_paths,
-        model_tier=ModelTier.DEFAULT,
+        model_tier=(
+            ModelTier.DEFAULT
+            if role is AgentRole.IMPLEMENTER
+            else ModelTier.CRITICAL
+        ),
         worktree_path=tmp_path / "worktree",
         changed_files=[],
         input_tokens=0,
