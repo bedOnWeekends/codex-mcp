@@ -205,8 +205,9 @@ async def test_delivery_reverifies_and_creates_local_commit(tmp_path: Path) -> N
         kind=TaskKind.DELIVER,
         run_status=RunStatus.DELIVERING,
     )
-    assert task.worktree_path is not None
-    task.worktree_path.mkdir(parents=True)
+    worktree_path = task.worktree_path
+    assert worktree_path is not None
+    worktree_path.mkdir(parents=True)
     task = task.model_copy(update={"instruction": "feat: add quote lookup"})
     store = AsyncMock(spec=Phase5Store)
     store.claim_next_task.return_value = task
@@ -214,7 +215,7 @@ async def test_delivery_reverifies_and_creates_local_commit(tmp_path: Path) -> N
     store.get_repository.return_value = repository
     worktrees = AsyncMock()
     worktrees.ensure.return_value = WorktreeInfo(
-        path=task.worktree_path,
+        path=worktree_path,
         branch="orchestrator/run-test",
     )
     worktrees.snapshot.side_effect = ["snapshot", "snapshot"]
@@ -233,7 +234,7 @@ async def test_delivery_reverifies_and_creates_local_commit(tmp_path: Path) -> N
     )
     assert await worker.process_one() is True
     worktrees.commit_verified_changes.assert_awaited_once_with(
-        task.worktree_path,
+        worktree_path,
         message="feat: add quote lookup",
         run_id=run.id,
     )
@@ -253,8 +254,9 @@ async def test_fake_delivery_completes_as_verified_noop(tmp_path: Path) -> None:
         kind=TaskKind.DELIVER,
         run_status=RunStatus.DELIVERING,
     )
-    assert task.worktree_path is not None
-    task.worktree_path.mkdir(parents=True)
+    worktree_path = task.worktree_path
+    assert worktree_path is not None
+    worktree_path.mkdir(parents=True)
     task = task.model_copy(update={"instruction": "test: verify fake delivery"})
     store = AsyncMock(spec=Phase5Store)
     store.claim_next_task.return_value = task
@@ -262,12 +264,12 @@ async def test_fake_delivery_completes_as_verified_noop(tmp_path: Path) -> None:
     store.get_repository.return_value = repository
     worktrees = AsyncMock()
     worktrees.ensure.return_value = WorktreeInfo(
-        path=task.worktree_path,
+        path=worktree_path,
         branch="orchestrator/run-test",
     )
     worktrees.snapshot.side_effect = ["snapshot", "snapshot"]
     worktrees.commit_verified_changes.side_effect = NoChangesToCommitError(
-        str(task.worktree_path),
+        str(worktree_path),
         "worktree has no changes to commit",
     )
     verifier = AsyncMock()
