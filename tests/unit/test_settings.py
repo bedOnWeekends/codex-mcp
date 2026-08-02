@@ -95,14 +95,14 @@ def test_legacy_never_approval_policy_is_normalized(tmp_path: Path) -> None:
     assert settings.codex_approval_policy == "deny_all"
 
 
-def test_empty_model_name_is_rejected(tmp_path: Path) -> None:
-    with pytest.raises(ValidationError):
-        Settings.model_validate(
-            {
-                "runtime_dir": tmp_path / "runtime",
-                "codex_model_default": " ",
-            }
-        )
+def test_legacy_blank_model_name_uses_default(tmp_path: Path) -> None:
+    settings = Settings.model_validate(
+        {
+            "runtime_dir": tmp_path / "runtime",
+            "codex_model_default": " ",
+        }
+    )
+    assert settings.codex_model_default == "gpt-5.6-terra"
 
 
 def test_non_github_api_url_is_rejected(tmp_path: Path) -> None:
