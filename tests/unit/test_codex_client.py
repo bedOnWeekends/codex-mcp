@@ -3,6 +3,7 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any, cast
 
 import pytest
 
@@ -96,7 +97,8 @@ async def test_live_adapter_passes_effort_schema_and_usage(
     assert result.cached_input_tokens == 11
     assert result.output_tokens == 5
     assert [name for name, _ in calls] == ["enter", "thread_start", "run", "exit"]
-    run_kwargs = calls[2][1][1]
+    _, raw_run_call = calls[2]
+    _, run_kwargs = cast(tuple[str, dict[str, Any]], raw_run_call)
     assert run_kwargs["effort"] == "high"
     assert run_kwargs["output_schema"] == schema
 
