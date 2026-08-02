@@ -1,58 +1,101 @@
-# Codex Orchestrator — Phase 6
+# Codex Orchestrator — Phase 7
 
-Phase 6 adds an explicit publication boundary after verified local delivery. A run
-never pushes automatically after implementation or delivery. It first waits in
-`awaiting_publish_approval`, where the operator can either finish locally or approve
-publication of the isolated run branch as a GitHub Draft Pull Request.
+Phase 7 replaces the single implementation task with a durable multi-agent workflow.
+After plan approval, a read-only supervisor produces a validated dependency DAG. Ready
+agents execute in parallel through the existing PostgreSQL queue, each with an
+independent Codex thread, Git worktree, role contract, and file-ownership boundary.
+The integrator collects implementer commits without creating the final commit, then
+reuses the existing verification, delivery, and Draft PR publication boundaries.
 
 ## Safety defaults
 
-- `ORCH_CODEX_MODE=fake` remains the default, so planning and implementation use no
-  Codex quota.
-- `ORCH_GITHUB_PUBLISH_MODE=fake` is also the default. Fake publication performs no
-  Git push and no GitHub API request.
-- Planning is read-only.
-- Implementation, fixes, verification, delivery, and publication use a per-run Git
-  worktree and branch.
-- Delivery reruns administrator-registered verification commands before committing.
-- Publication requires another explicit approval using the latest run version.
-- Live publication accepts only a clean orchestrator run branch whose HEAD equals the
-  approved delivery commit and contains the matching `Orchestrator-Run` trailer.
-- Live publication pushes only the isolated run branch without force-push.
-- Phase 6 creates or reuses only a GitHub Draft Pull Request.
-- The orchestrator never marks a PR ready, merges, deploys, or trades.
-- `finish_run` completes a delivered run while keeping its branch local.
+- `ORCH_CODEX_MODE=fake` remains the default. The deterministic fake supervisor creates
+  a four-agent DAG without consuming Codex quota.
+- `ORCH_GITHUB_PUBLISH_MODE=fake` remains the default and performs no remote side
+  effects.
+- The supervisor, explorers, and reviewers always run read-only.
+- Implementers may modify only their declared non-overlapping `owned_paths`.
+- Every agent uses its own worktree and branch.
+- Dependency commits are applied only inside dependent agent worktrees.
+- Integration conflicts and ownership violations fail instead of being auto-resolved.
+- Agent retries amend one cumulative agent commit rather than creating an ambiguous
+  commit chain.
+- Final integration stages all implementer changes with `cherry-pick --no-commit`.
+- The existing REVIEW and DELIVERY stages verify and create one final run commit.
+- Publication still requires a separate approval and creates only a Draft PR.
+- The orchestrator never force-pushes, marks a PR ready, merges, deploys, or trades.
 
-## Phase 6 flow
+## Phase 7 flow
 
 ```text
 create_run
-  -> PLAN
+  -> PLAN (read-only)
   -> awaiting_plan_approval
 approve_plan
-  -> IMPLEMENT in runtime/worktrees/<run-id>
-  -> REVIEW using git diff --check + registered commands
+  -> SUPERVISE (read-only)
+     -> validate roles, DAG, dependencies, and path ownership
+  -> EXECUTING
+     -> EXPLORER agents (read-only)
+     -> ready IMPLEMENTER agents in parallel
+     -> REVIEWER agents after all implementers
+  -> INTEGRATING
+     -> stage implementer commits in topological order
+  -> REVIEW
+     -> administrator-registered verification commands
   -> awaiting_delivery_approval
 approve_delivery
-  -> DELIVER
-     -> rerun verification
-     -> create one local commit on orchestrator/run-<run-id>
+  -> rerun verification
+  -> create one final local run commit
   -> awaiting_publish_approval
-
-Option A: finish_run
-  -> completed with no push and no pull request
-
-Option B: approve_publish
-  -> PUBLISH
-     -> fake mode: record a simulated publication
-     -> live mode: push the run branch and create or reuse a Draft PR
+finish_run or approve_publish
   -> completed
 ```
 
-A failed publish task follows the existing bounded retry policy. A retry re-pushes the
-same branch and reuses an existing open Draft PR when one already exists.
+The global `ORCH_MAX_PARALLEL_WORKERS` setting bounds actual concurrency. A run may
+contain at most `ORCH_MAX_AGENTS_PER_RUN` assignments, currently restricted to 3–8.
 
-## Setup
+## Durable agent contract
+
+Each row in `agent_assignments` records:
+
+- stable assignment key and role
+- dependency keys and owned path prefixes
+- task and worktree identity
+- independent Codex thread
+- status, token usage, and estimated cost
+- changed files and local agent commit SHA
+
+A supervisor plan is rejected when it contains cycles, unknown dependencies,
+overlapping implementer ownership, read-only path ownership, or a reviewer that does
+not depend on every implementer.
+
+## Worktree layout
+
+```text
+runtime/worktrees/
+├─ <run-id>/
+│  └─ final integration and delivery worktree
+└─ agents/
+   └─ <run-id>/
+      ├─ explore-codebase/
+      ├─ implement-source/
+      ├─ implement-tests/
+      └─ review-integration/
+```
+
+Agent branches use:
+
+```text
+orchestrator/run-<run-id>/agent-<assignment-key>
+```
+
+The final run branch remains:
+
+```text
+orchestrator/run-<run-id>
+```
+
+## Setup and migration
 
 ```powershell
 Copy-Item .env.example .env
@@ -60,6 +103,9 @@ python -m pip install -e ".[dev]"
 docker compose up -d postgres
 alembic upgrade head
 ```
+
+Phase 7 adds migration `0002_agent_assignments.py`. Existing Phase 6 databases must run
+`alembic upgrade head` before starting the server or worker.
 
 Register the target repository and optional verification commands:
 
@@ -83,9 +129,6 @@ Example `verification.json`:
 ]
 ```
 
-Verification commands are argv arrays. Shell strings, pipes, redirects, and command
-chaining are intentionally rejected.
-
 ## Run locally
 
 Terminal 1:
@@ -106,7 +149,7 @@ Inspector URL:
 http://127.0.0.1:8000/mcp
 ```
 
-Public MCP tools:
+Public MCP tools remain:
 
 - `list_repositories`
 - `create_run`
@@ -117,34 +160,42 @@ Public MCP tools:
 - `finish_run`
 - `cancel_run`
 
-## Zero-side-effect publication test
+`get_run` now includes an `agents` array with dependency, ownership, worktree, thread,
+commit, usage, and status details.
 
-Keep both modes fake:
+## Zero-cost multi-agent check
+
+Keep both external modes fake:
 
 ```env
 ORCH_CODEX_MODE=fake
 ORCH_GITHUB_PUBLISH_MODE=fake
+ORCH_MAX_PARALLEL_WORKERS=3
+ORCH_MAX_AGENTS_PER_RUN=8
 ```
 
-After `get_run` reports `awaiting_publish_approval`, call:
+The fake supervisor creates:
 
-```json
-{
-  "run_id": "<run UUID>",
-  "expected_version": 8,
-  "title": "test(orchestrator): simulate draft publication",
-  "body": "Phase 6 fake publication test",
-  "draft": true,
-  "notes": "No remote side effects"
-}
+```text
+explore-codebase
+├─ implement-source  (owns src)
+└─ implement-tests   (owns tests)
+   └─ review-integration depends on both implementers
 ```
 
-Use the exact latest `version` returned by `get_run`. The fake publisher records a
-successful simulated publication without reading Git credentials or contacting GitHub.
+The two implementers become queue-ready together and can be claimed by separate
+workers. Fake agents make no files, so the run completes through a verified no-op
+delivery without modifying the target repository or contacting GitHub.
 
-## Live GitHub publication
+## Live modes
 
-Live publication is opt-in:
+Live Codex execution remains opt-in:
+
+```env
+ORCH_CODEX_MODE=live
+```
+
+Live GitHub Draft PR publication is independently opt-in:
 
 ```env
 ORCH_GITHUB_PUBLISH_MODE=live
@@ -154,39 +205,15 @@ ORCH_GITHUB_API_URL=https://api.github.com
 ORCH_GITHUB_API_VERSION=2026-03-10
 ```
 
-The token is used only for GitHub REST API requests and is stored as a Pydantic
-`SecretStr`. The configured Git remote must separately have permission to push the run
-branch, for example through the existing Git Credential Manager or SSH configuration.
-The REST token must be able to create pull requests in the target repository.
-
-Phase 6 supports only `github.com` HTTPS and SSH remote formats. Credential-bearing
-HTTPS remote URLs are rejected. Live publication requires a real delivery commit;
-fake-mode no-op deliveries cannot be published live.
-
-Example approval:
-
-```json
-{
-  "run_id": "<run UUID>",
-  "expected_version": 8,
-  "title": "feat(trading): add quote lookup",
-  "body": "## Summary\n\nAdd verified quote lookup support.",
-  "draft": true,
-  "notes": "Reviewed local delivery"
-}
-```
-
-Supported title types are `feat`, `fix`, `refactor`, `test`, `docs`, `chore`, and
-`ci`. The `draft` field is fixed to `true`; requesting a non-draft PR is rejected.
+Do not enable either live mode during the Phase 7 local quality check.
 
 ## Validate
 
 ```powershell
+python -m pip install -e ".[dev]"
+alembic upgrade head
 ruff format --check .
 ruff check .
 pyright
 pytest -q
 ```
-
-Run status, task kind, approval type, and artifact kind remain string columns, so Phase
-6 requires no new Alembic migration.
