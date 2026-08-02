@@ -3,6 +3,7 @@ from __future__ import annotations
 from uuid import UUID
 
 from .mcp_schemas import (
+    AgentAssignmentSummary,
     ApproveDeliveryInput,
     ApproveDeliveryOutput,
     ApprovePlanInput,
@@ -20,7 +21,7 @@ from .mcp_schemas import (
     RepositorySummary,
     TaskSummary,
 )
-from .phase6_store import Phase6Store
+from .phase7_store import Phase7Store
 from .schemas import ModelTier, RiskLevel, RunCreate
 from .settings import Settings
 
@@ -28,7 +29,7 @@ from .settings import Settings
 class RunControlService:
     """Application service used by MCP tools and future local clients."""
 
-    def __init__(self, store: Phase6Store, settings: Settings) -> None:
+    def __init__(self, store: Phase7Store, settings: Settings) -> None:
         self._store = store
         self._settings = settings
 
@@ -79,26 +80,23 @@ class RunControlService:
 
     async def approve_plan(self, request: ApprovePlanInput) -> ApprovePlanOutput:
         run = await self._store.get_run(request.run_id)
-        assert self._settings.worktrees_dir is not None
-        worktree_path = self._settings.worktrees_dir / str(run.id)
-        run, task, _ = await self._store.approve_plan_and_queue_implementation(
+        run, task, _ = await self._store.approve_plan_and_queue_supervision(
             run.id,
             expected_version=request.expected_version,
             notes=request.notes,
-            instruction=self._build_implementation_instruction(request.notes),
-            model_tier=self._model_tier_for_risk(run.risk_level),
+            instruction=self._build_supervision_instruction(request.notes),
+            model_tier=ModelTier.CHEAP,
             max_attempts=self._settings.max_attempts_per_task,
-            worktree_path=worktree_path,
         )
         return ApprovePlanOutput(
             run_id=run.id,
             status=run.status,
             version=run.version,
-            implementation_task_id=task.id,
-            implementation_task_status=task.status,
+            supervisor_task_id=task.id,
+            supervisor_task_status=task.status,
             message=(
-                "Plan approved. Implementation task queued in an isolated Git "
-                "worktree; no merge will be performed automatically."
+                "Plan approved. A low-cost scout will choose the smallest reliable "
+                "single- or multi-agent execution shape before files are modified."
             ),
         )
 
@@ -177,6 +175,7 @@ class RunControlService:
         run = await self._store.get_run(run_id)
         repository = await self._store.get_repository(run.repository_id)
         tasks = await self._store.list_tasks_for_run(run.id)
+        agents = await self._store.list_agent_assignments(run.id)
         results = {
             item.task_id: item
             for item in await self._store.list_task_results_for_run(run.id)
@@ -222,6 +221,30 @@ class RunControlService:
                 )
                 for task in tasks
             ],
+            agents=[
+                AgentAssignmentSummary(
+                    id=agent.id,
+                    task_id=agent.task_id,
+                    key=agent.key,
+                    role=agent.role,
+                    status=agent.status,
+                    depends_on=agent.depends_on,
+                    owned_paths=agent.owned_paths,
+                    model_tier=agent.model_tier,
+                    worktree_path=(
+                        str(agent.worktree_path) if agent.worktree_path else None
+                    ),
+                    codex_thread_id=agent.codex_thread_id,
+                    commit_sha=agent.commit_sha,
+                    changed_files=agent.changed_files,
+                    input_tokens=agent.input_tokens,
+                    output_tokens=agent.output_tokens,
+                    estimated_cost_usd=agent.estimated_cost_usd,
+                    started_at=agent.started_at,
+                    completed_at=agent.completed_at,
+                )
+                for agent in agents
+            ],
             created_at=run.created_at,
             updated_at=run.updated_at,
         )
@@ -265,11 +288,11 @@ class RunControlService:
         )
 
     @staticmethod
-    def _build_implementation_instruction(notes: str | None) -> str:
-        approval_notes = notes.strip() if notes else "No additional approval notes."
+    def _build_supervision_instruction(notes: str | None) -> str:
+        approval_notes = notes.strip() if notes else "none"
         return (
-            "Implement the approved plan in the isolated Git worktree. Keep changes "
-            "scoped to the run goal, preserve existing behavior outside that scope, "
-            "and do not commit, merge, push, deploy, or access live credentials.\n\n"
-            f"Approval notes:\n{approval_notes}"
+            "Use a short read-only scout trajectory to choose the cheapest reliable "
+            "execution mode. Prefer one implementer. Use parallel implementers only "
+            "for proven non-overlapping path groups. Reviewer use is conditional. "
+            f"Approval notes: {approval_notes}"
         )

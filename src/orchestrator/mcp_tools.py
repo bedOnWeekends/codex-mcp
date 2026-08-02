@@ -100,11 +100,12 @@ def register_mcp_tools(
 
     @mcp.tool(
         name="approve_plan",
-        title="Approve Plan and Queue Implementation",
+        title="Approve Plan and Queue Multi-Agent Supervision",
         description=(
-            "Approve a completed plan using the latest run version. This authorizes "
-            "file changes in an isolated Git worktree and queues implementation, but "
-            "does not commit, merge, push, deploy, or trade."
+            "Approve a completed plan using the latest run version. This queues a "
+            "read-only supervisor that validates an agent dependency DAG and "
+            "non-overlapping file ownership before implementation agents may modify "
+            "isolated worktrees. It does not merge, push, deploy, or trade."
         ),
         annotations=ToolAnnotations(
             readOnlyHint=False,
@@ -230,7 +231,8 @@ def register_mcp_tools(
         title="Get Orchestration Run",
         description=(
             "Read the authoritative PostgreSQL state of a run, including plan, "
-            "version, task results, changed files, and verification commands."
+            "version, tasks, agent assignments, ownership, commits, and verification "
+            "results."
         ),
         annotations=ToolAnnotations(
             readOnlyHint=True,

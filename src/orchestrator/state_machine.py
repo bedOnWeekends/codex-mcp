@@ -17,11 +17,27 @@ RUN_TRANSITIONS: Mapping[RunStatus, frozenset[RunStatus]] = {
     RunStatus.AWAITING_PLAN_APPROVAL: frozenset(
         {
             RunStatus.PLANNING,
+            RunStatus.SUPERVISING,
+            RunStatus.CANCELED,
+        }
+    ),
+    RunStatus.SUPERVISING: frozenset(
+        {
             RunStatus.EXECUTING,
+            RunStatus.FAILED,
             RunStatus.CANCELED,
         }
     ),
     RunStatus.EXECUTING: frozenset(
+        {
+            RunStatus.INTEGRATING,
+            RunStatus.VERIFYING,
+            RunStatus.AWAITING_REVISION,
+            RunStatus.FAILED,
+            RunStatus.CANCELED,
+        }
+    ),
+    RunStatus.INTEGRATING: frozenset(
         {
             RunStatus.VERIFYING,
             RunStatus.AWAITING_REVISION,

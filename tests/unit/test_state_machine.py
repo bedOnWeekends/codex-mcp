@@ -12,7 +12,13 @@ from orchestrator.state_machine import (
 
 def test_valid_run_transition() -> None:
     ensure_run_transition(RunStatus.CREATED, RunStatus.PLANNING)
-    ensure_run_transition(RunStatus.AWAITING_PLAN_APPROVAL, RunStatus.EXECUTING)
+    ensure_run_transition(
+        RunStatus.AWAITING_PLAN_APPROVAL,
+        RunStatus.SUPERVISING,
+    )
+    ensure_run_transition(RunStatus.SUPERVISING, RunStatus.EXECUTING)
+    ensure_run_transition(RunStatus.EXECUTING, RunStatus.INTEGRATING)
+    ensure_run_transition(RunStatus.INTEGRATING, RunStatus.VERIFYING)
     ensure_run_transition(
         RunStatus.VERIFYING,
         RunStatus.AWAITING_DELIVERY_APPROVAL,
@@ -32,6 +38,10 @@ def test_valid_run_transition() -> None:
     ensure_run_transition(RunStatus.PUBLISHING, RunStatus.COMPLETED)
 
 
+def test_fix_task_can_return_from_execution_to_verification() -> None:
+    ensure_run_transition(RunStatus.EXECUTING, RunStatus.VERIFYING)
+
+
 def test_local_delivery_can_finish_without_publication() -> None:
     ensure_run_transition(
         RunStatus.AWAITING_PUBLISH_APPROVAL,
@@ -42,6 +52,19 @@ def test_local_delivery_can_finish_without_publication() -> None:
 def test_invalid_run_transition() -> None:
     with pytest.raises(InvalidStateTransitionError):
         ensure_run_transition(RunStatus.CREATED, RunStatus.COMPLETED)
+
+
+def test_agent_execution_cannot_skip_supervisor() -> None:
+    with pytest.raises(InvalidStateTransitionError):
+        ensure_run_transition(
+            RunStatus.AWAITING_PLAN_APPROVAL,
+            RunStatus.EXECUTING,
+        )
+
+
+def test_integration_cannot_start_before_agent_execution() -> None:
+    with pytest.raises(InvalidStateTransitionError):
+        ensure_run_transition(RunStatus.SUPERVISING, RunStatus.INTEGRATING)
 
 
 def test_delivery_cannot_skip_approval() -> None:
@@ -61,6 +84,9 @@ def test_failed_task_can_be_requeued() -> None:
 def test_terminal_status_helpers() -> None:
     assert is_terminal_run_status(RunStatus.COMPLETED)
     assert is_terminal_run_status(RunStatus.CANCELED)
+    assert not is_terminal_run_status(RunStatus.SUPERVISING)
+    assert not is_terminal_run_status(RunStatus.EXECUTING)
+    assert not is_terminal_run_status(RunStatus.INTEGRATING)
     assert not is_terminal_run_status(RunStatus.AWAITING_DELIVERY_APPROVAL)
     assert not is_terminal_run_status(RunStatus.DELIVERING)
     assert not is_terminal_run_status(RunStatus.AWAITING_PUBLISH_APPROVAL)

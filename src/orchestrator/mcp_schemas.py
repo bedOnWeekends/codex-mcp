@@ -9,6 +9,8 @@ from uuid import UUID
 from pydantic import Field, field_validator
 
 from .schemas import (
+    AgentAssignmentStatus,
+    AgentRole,
     ModelTier,
     OrchestratorModel,
     RiskLevel,
@@ -72,8 +74,8 @@ class ApprovePlanOutput(OrchestratorModel):
     run_id: UUID
     status: RunStatus
     version: int
-    implementation_task_id: UUID
-    implementation_task_status: TaskStatus
+    supervisor_task_id: UUID
+    supervisor_task_status: TaskStatus
     message: str
 
 
@@ -157,6 +159,26 @@ class TaskSummary(OrchestratorModel):
     completed_at: datetime | None
 
 
+class AgentAssignmentSummary(OrchestratorModel):
+    id: UUID
+    task_id: UUID | None
+    key: str
+    role: AgentRole
+    status: AgentAssignmentStatus
+    depends_on: list[str]
+    owned_paths: list[str]
+    model_tier: ModelTier
+    worktree_path: str | None
+    codex_thread_id: str | None
+    commit_sha: str | None
+    changed_files: list[str]
+    input_tokens: int
+    output_tokens: int
+    estimated_cost_usd: Decimal
+    started_at: datetime | None
+    completed_at: datetime | None
+
+
 class GetRunOutput(OrchestratorModel):
     run_id: UUID
     repository: str
@@ -170,6 +192,7 @@ class GetRunOutput(OrchestratorModel):
     current_task_id: UUID | None
     plan: str | None
     tasks: list[TaskSummary]
+    agents: list[AgentAssignmentSummary] = Field(default_factory=list)
     created_at: datetime
     updated_at: datetime
 

@@ -6,6 +6,8 @@ from pathlib import Path
 from typing import Protocol
 from uuid import uuid4
 
+from .settings import ReasoningEffort
+
 
 class CodexSdkUnavailableError(RuntimeError):
     pass
@@ -16,6 +18,8 @@ class CodexRunResult:
     thread_id: str
     text: str
     input_tokens: int = 0
+    cached_input_tokens: int = 0
+    cache_write_tokens: int = 0
     output_tokens: int = 0
 
 
@@ -26,6 +30,7 @@ class CodexRunner(Protocol):
         prompt: str,
         cwd: Path,
         thread_id: str | None = None,
+        output_schema: dict[str, object] | None = None,
     ) -> CodexRunResult: ...
 
 
@@ -35,11 +40,13 @@ class CodexClient:
     def __init__(
         self,
         *,
-        model: str | None,
+        model: str,
+        effort: ReasoningEffort,
         approval_policy: str,
         sandbox_mode: str,
     ) -> None:
         self.model = model
+        self.effort = effort
         self.approval_policy = approval_policy
         self.sandbox_mode = sandbox_mode
 
@@ -49,6 +56,7 @@ class CodexClient:
         prompt: str,
         cwd: Path,
         thread_id: str | None = None,
+        output_schema: dict[str, object] | None = None,
     ) -> CodexRunResult:
         try:
             from openai_codex import ApprovalMode, AsyncCodex, Sandbox
@@ -91,7 +99,9 @@ class CodexClient:
                 prompt,
                 approval_mode=approval_mode,
                 cwd=cwd_text,
+                effort=self.effort,
                 model=self.model,
+                output_schema=output_schema,
                 sandbox=sandbox,
             )
 
@@ -100,6 +110,12 @@ class CodexClient:
             thread_id=thread.id,
             text=result.final_response or "",
             input_tokens=usage.input_tokens if usage is not None else 0,
+            cached_input_tokens=(
+                getattr(usage, "cached_input_tokens", 0) if usage is not None else 0
+            ),
+            cache_write_tokens=(
+                getattr(usage, "cache_write_tokens", 0) if usage is not None else 0
+            ),
             output_tokens=usage.output_tokens if usage is not None else 0,
         )
 
@@ -148,7 +164,9 @@ class FakeCodexClient:
         prompt: str,
         cwd: Path,
         thread_id: str | None = None,
+        output_schema: dict[str, object] | None = None,
     ) -> CodexRunResult:
+        del output_schema
         if self.delay_seconds:
             await asyncio.sleep(self.delay_seconds)
         task_kind = "unknown"

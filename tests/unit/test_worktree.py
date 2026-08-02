@@ -75,6 +75,85 @@ async def test_worktree_is_isolated_and_reports_changes(tmp_path: Path) -> None:
 
 @pytest.mark.skipif(shutil.which("git") is None, reason="git is required")
 @pytest.mark.asyncio
+async def test_agent_retry_amends_and_integration_creates_one_delivery_commit(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "repo"
+    root.mkdir()
+    initialize_repository(root)
+    repository = make_repository(root)
+    run_id = uuid4()
+    assignment_id = uuid4()
+    manager = GitWorktreeManager(branch_prefix="orchestrator/run-")
+
+    agent = await manager.ensure_agent(
+        repository=repository,
+        run_id=run_id,
+        assignment_key="implement-core",
+        path=(
+            tmp_path
+            / "worktrees"
+            / "agents"
+            / str(run_id)
+            / "implement-core"
+        ),
+    )
+    source = agent.path / "src"
+    source.mkdir()
+    (source / "feature.py").write_text("ENABLED = True\n", encoding="utf-8")
+    first = await manager.commit_agent_changes(
+        agent.path,
+        message="chore(agent): complete implement-core",
+        run_id=run_id,
+        assignment_id=assignment_id,
+    )
+    (source / "retry.py").write_text("RETRIED = True\n", encoding="utf-8")
+    amended = await manager.commit_agent_changes(
+        agent.path,
+        message="chore(agent): complete implement-core",
+        run_id=run_id,
+        assignment_id=assignment_id,
+    )
+    reused = await manager.commit_agent_changes(
+        agent.path,
+        message="chore(agent): complete implement-core",
+        run_id=run_id,
+        assignment_id=assignment_id,
+    )
+
+    integration = await manager.ensure(
+        repository=repository,
+        run_id=run_id,
+        path=tmp_path / "worktrees" / str(run_id),
+    )
+    staged = await manager.integrate_commits(integration.path, [amended.sha])
+    delivery = await manager.commit_verified_changes(
+        integration.path,
+        message="feat: integrate agent changes",
+        run_id=run_id,
+    )
+
+    assert first.sha != amended.sha
+    assert amended.changed_files == ["src/feature.py", "src/retry.py"]
+    assert reused.sha == amended.sha
+    assert reused.reused is True
+    assert staged.applied_commits == [amended.sha]
+    assert staged.changed_files == ["src/feature.py", "src/retry.py"]
+    assert delivery.changed_files == ["src/feature.py", "src/retry.py"]
+    assert (integration.path / "src" / "feature.py").exists()
+    assert (integration.path / "src" / "retry.py").exists()
+    assert not (root / "src" / "feature.py").exists()
+    commit_count = subprocess.run(
+        ["git", "-C", str(integration.path), "rev-list", "--count", "HEAD"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    assert commit_count == "2"
+
+
+@pytest.mark.skipif(shutil.which("git") is None, reason="git is required")
+@pytest.mark.asyncio
 async def test_delivery_commit_is_local_and_idempotent(tmp_path: Path) -> None:
     root = tmp_path / "repo"
     root.mkdir()

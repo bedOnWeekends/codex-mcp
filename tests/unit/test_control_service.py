@@ -17,8 +17,9 @@ from orchestrator.mcp_schemas import (
     CreateRunInput,
     FinishRunInput,
 )
-from orchestrator.phase6_store import Phase6Store
+from orchestrator.phase7_store import Phase7Store
 from orchestrator.schemas import (
+    AgentAssignment,
     Approval,
     ApprovalType,
     ModelTier,
@@ -78,7 +79,7 @@ class FakeStore:
         )
         self.run = self.run.model_copy(update={"current_task_id": self.task.id})
         self.received_plan_instruction: str | None = None
-        self.approved_worktree_path: Path | None = None
+        self.supervisor_instruction: str | None = None
         self.delivery_worktree_path: Path | None = None
         self.delivery_commit_message: str | None = None
         self.publish_worktree_path: Path | None = None
@@ -121,7 +122,11 @@ class FakeStore:
         assert run_id == self.run.id
         return []
 
-    async def approve_plan_and_queue_implementation(
+    async def list_agent_assignments(self, run_id: UUID) -> list[AgentAssignment]:
+        assert run_id == self.run.id
+        return []
+
+    async def approve_plan_and_queue_supervision(
         self,
         run_id: UUID,
         *,
@@ -130,20 +135,19 @@ class FakeStore:
         instruction: str,
         model_tier: ModelTier,
         max_attempts: int,
-        worktree_path: Path,
     ) -> tuple[Run, Task, Approval]:
         assert run_id == self.run.id
         assert expected_version == self.run.version
         assert notes == "approved"
-        assert "isolated Git worktree" in instruction
-        assert model_tier is ModelTier.DEFAULT
+        assert "cheapest reliable" in instruction
+        assert model_tier is ModelTier.CHEAP
         assert max_attempts == 2
-        self.approved_worktree_path = worktree_path
+        self.supervisor_instruction = instruction
         return self._queued_outcome(
-            kind=TaskKind.IMPLEMENT,
-            status=RunStatus.EXECUTING,
+            kind=TaskKind.SUPERVISE,
+            status=RunStatus.SUPERVISING,
             instruction=instruction,
-            worktree_path=worktree_path,
+            worktree_path=None,
             approval_type=ApprovalType.PLAN,
             notes=notes,
             expected_version=expected_version,
@@ -257,7 +261,7 @@ class FakeStore:
         kind: TaskKind,
         status: RunStatus,
         instruction: str,
-        worktree_path: Path,
+        worktree_path: Path | None,
         approval_type: ApprovalType,
         notes: str | None,
         expected_version: int,
@@ -297,7 +301,7 @@ def make_service(fake: FakeStore, *, runtime_dir: Path) -> RunControlService:
         database_url="postgresql+asyncpg://u:p@localhost/test",
         runtime_dir=runtime_dir,
     )
-    return RunControlService(cast(Phase6Store, fake), settings)
+    return RunControlService(cast(Phase7Store, fake), settings)
 
 
 @pytest.mark.asyncio
@@ -317,9 +321,7 @@ async def test_create_run_queues_a_planning_task(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_approve_plan_queues_implementation_in_runtime_worktree(
-    tmp_path: Path,
-) -> None:
+async def test_approve_plan_queues_low_cost_supervisor_task(tmp_path: Path) -> None:
     fake = FakeStore()
     fake.run = fake.run.model_copy(
         update={"status": RunStatus.AWAITING_PLAN_APPROVAL, "plan": "Approved plan"}
@@ -331,11 +333,10 @@ async def test_approve_plan_queues_implementation_in_runtime_worktree(
             notes="approved",
         )
     )
-    assert output.status is RunStatus.EXECUTING
-    assert output.implementation_task_status is TaskStatus.QUEUED
-    assert fake.approved_worktree_path == tmp_path.resolve() / "worktrees" / str(
-        fake.run.id
-    )
+    assert output.status is RunStatus.SUPERVISING
+    assert output.supervisor_task_status is TaskStatus.QUEUED
+    assert "low-cost scout" in output.message
+    assert fake.supervisor_instruction is not None
 
 
 @pytest.mark.asyncio
@@ -399,13 +400,14 @@ async def test_finish_run_keeps_delivery_local(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_get_run_returns_task_summaries(tmp_path: Path) -> None:
+async def test_get_run_returns_task_and_agent_summaries(tmp_path: Path) -> None:
     fake = FakeStore()
     output = await make_service(fake, runtime_dir=tmp_path).get_run(fake.run.id)
     assert output.repository == "toss-trader"
     assert output.version == 2
     assert output.tasks[0].kind is TaskKind.PLAN
     assert output.tasks[0].result_summary is None
+    assert output.agents == []
 
 
 @pytest.mark.asyncio

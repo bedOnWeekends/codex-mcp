@@ -1,11 +1,25 @@
 from __future__ import annotations
 
+from decimal import Decimal
 from functools import lru_cache
 from pathlib import Path
 from typing import Literal
 
-from pydantic import Field, SecretStr, field_validator, model_validator
+from pydantic import (
+    Field,
+    SecretStr,
+    ValidationInfo,
+    field_validator,
+    model_validator,
+)
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+ReasoningEffort = Literal["none", "low", "medium", "high", "xhigh", "max"]
+_MODEL_DEFAULTS = {
+    "codex_model_cheap": "gpt-5.6-luna",
+    "codex_model_default": "gpt-5.6-terra",
+    "codex_model_critical": "gpt-5.6-sol",
+}
 
 
 class Settings(BaseSettings):
@@ -40,18 +54,77 @@ class Settings(BaseSettings):
     artifacts_dir: Path | None = None
     logs_dir: Path | None = None
     max_parallel_workers: int = Field(default=3, ge=1, le=16)
+    max_agents_per_run: int = Field(default=4, ge=2, le=4)
+    max_tokens_per_run: int = Field(default=250_000, ge=10_000, le=5_000_000)
+    max_dependency_summary_chars: int = Field(default=1_200, ge=256, le=4_000)
+    scout_review_confidence_threshold: float = Field(default=0.72, ge=0, le=1)
     max_attempts_per_task: int = Field(default=2, ge=1, le=10)
     max_replans: int = Field(default=1, ge=0, le=5)
     max_fix_cycles: int = Field(default=2, ge=0, le=10)
     worker_poll_interval_seconds: float = Field(default=1.0, gt=0, le=60)
     worker_id: str = "local-worker"
+
     codex_mode: Literal["fake", "live"] = "fake"
     fake_codex_delay_seconds: float = Field(default=0.0, ge=0, le=30)
-    codex_model_cheap: str | None = None
-    codex_model_default: str | None = None
-    codex_model_critical: str | None = None
+    codex_model_cheap: str = _MODEL_DEFAULTS["codex_model_cheap"]
+    codex_model_default: str = _MODEL_DEFAULTS["codex_model_default"]
+    codex_model_critical: str = _MODEL_DEFAULTS["codex_model_critical"]
+    codex_effort_scout: ReasoningEffort = "low"
+    codex_effort_plan: ReasoningEffort = "medium"
+    codex_effort_default: ReasoningEffort = "high"
+    codex_effort_critical: ReasoningEffort = "medium"
+    codex_effort_retry: ReasoningEffort = "high"
     codex_approval_policy: str = "never"
     codex_sandbox_mode: str = "workspace-write"
+
+    codex_price_cheap_input_per_mtok: Decimal = Field(
+        default=Decimal("1.00"), ge=0
+    )
+    codex_price_cheap_cached_input_per_mtok: Decimal = Field(
+        default=Decimal("0.10"), ge=0
+    )
+    codex_price_cheap_output_per_mtok: Decimal = Field(
+        default=Decimal("6.00"), ge=0
+    )
+    codex_price_default_input_per_mtok: Decimal = Field(
+        default=Decimal("2.50"), ge=0
+    )
+    codex_price_default_cached_input_per_mtok: Decimal = Field(
+        default=Decimal("0.25"), ge=0
+    )
+    codex_price_default_output_per_mtok: Decimal = Field(
+        default=Decimal("15.00"), ge=0
+    )
+    codex_price_critical_input_per_mtok: Decimal = Field(
+        default=Decimal("5.00"), ge=0
+    )
+    codex_price_critical_cached_input_per_mtok: Decimal = Field(
+        default=Decimal("0.50"), ge=0
+    )
+    codex_price_critical_output_per_mtok: Decimal = Field(
+        default=Decimal("30.00"), ge=0
+    )
+    codex_cache_write_multiplier: Decimal = Field(
+        default=Decimal("1.25"), ge=1
+    )
+    projected_call_cost_usd_cheap: Decimal = Field(
+        default=Decimal("0.05"), ge=0
+    )
+    projected_call_cost_usd_default: Decimal = Field(
+        default=Decimal("0.45"), ge=0
+    )
+    projected_call_cost_usd_critical: Decimal = Field(
+        default=Decimal("1.00"), ge=0
+    )
+    projected_call_tokens_cheap: int = Field(default=12_000, ge=1_000, le=500_000)
+    projected_call_tokens_default: int = Field(
+        default=60_000, ge=1_000, le=1_000_000
+    )
+    projected_call_tokens_critical: int = Field(
+        default=100_000, ge=1_000, le=2_000_000
+    )
+    budget_reserve_usd: Decimal = Field(default=Decimal("0.05"), ge=0)
+
     verification_timeout_seconds: int = Field(default=300, ge=1, le=3600)
     worktree_branch_prefix: str = "orchestrator/run-"
     github_publish_mode: Literal["fake", "live"] = "fake"
@@ -82,6 +155,22 @@ class Settings(BaseSettings):
                 "codex_sandbox_mode must be 'read-only' or 'workspace-write'"
             )
         return normalized
+
+    @field_validator(
+        "codex_model_cheap",
+        "codex_model_default",
+        "codex_model_critical",
+        mode="before",
+    )
+    @classmethod
+    def normalize_model_name(cls, value: object, info: ValidationInfo) -> str:
+        normalized = str(value or "").strip()
+        if normalized:
+            return normalized
+        field_name = info.field_name
+        if field_name is None or field_name not in _MODEL_DEFAULTS:
+            raise ValueError("could not resolve the Codex model setting name")
+        return _MODEL_DEFAULTS[field_name]
 
     @field_validator("database_url")
     @classmethod
