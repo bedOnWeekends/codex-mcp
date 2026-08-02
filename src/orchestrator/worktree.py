@@ -27,6 +27,7 @@ class DeliveryCommit:
     sha: str
     branch: str
     changed_files: list[str]
+    reused: bool = False
 
 
 class GitWorktreeManager:
@@ -123,19 +124,24 @@ class GitWorktreeManager:
         path: Path,
         *,
         message: str,
+        run_id: UUID,
     ) -> DeliveryCommit:
         await self._verify_existing_worktree(path)
-        changed_files = await self.changed_files(path)
-        if not changed_files:
-            raise InvalidRepositoryError(str(path), "worktree has no changes to commit")
-
-        await self._git(path, "diff", "--check")
         branch = await self._git_text(path, "branch", "--show-current")
         if not branch:
             raise InvalidRepositoryError(
                 str(path), "delivery commit requires a named worktree branch"
             )
 
+        changed_files = await self.changed_files(path)
+        if not changed_files:
+            return await self._reuse_delivery_commit(
+                path,
+                branch=branch,
+                run_id=run_id,
+            )
+
+        await self._git(path, "diff", "--check")
         await self._git(path, "add", "--all")
         staged_files = await self._git_text(path, "diff", "--cached", "--name-only")
         if not staged_files:
@@ -151,6 +157,8 @@ class GitWorktreeManager:
             "--no-gpg-sign",
             "-m",
             message,
+            "-m",
+            f"Orchestrator-Run: {run_id}",
         )
         sha = await self._git_text(path, "rev-parse", "HEAD")
         status = await self._git_text(path, "status", "--porcelain=v1")
@@ -162,6 +170,32 @@ class GitWorktreeManager:
             sha=sha,
             branch=branch,
             changed_files=changed_files,
+        )
+
+    async def _reuse_delivery_commit(
+        self,
+        path: Path,
+        *,
+        branch: str,
+        run_id: UUID,
+    ) -> DeliveryCommit:
+        body = await self._git_text(path, "log", "-1", "--format=%B")
+        if f"Orchestrator-Run: {run_id}" not in body.splitlines():
+            raise InvalidRepositoryError(str(path), "worktree has no changes to commit")
+        sha = await self._git_text(path, "rev-parse", "HEAD")
+        changed = await self._git_text(
+            path,
+            "diff-tree",
+            "--no-commit-id",
+            "--name-only",
+            "-r",
+            "HEAD",
+        )
+        return DeliveryCommit(
+            sha=sha,
+            branch=branch,
+            changed_files=[item for item in changed.splitlines() if item],
+            reused=True,
         )
 
     async def _verify_existing_worktree(self, path: Path) -> None:
