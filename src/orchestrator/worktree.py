@@ -133,6 +133,7 @@ class GitWorktreeManager:
         path: Path,
         commits: list[str],
     ) -> IntegrationResult:
+        """Commit dependency changes into an agent's private worktree."""
         await self._verify_existing_worktree(path)
         await self._ensure_clean(path)
         branch = await self._git_text(path, "branch", "--show-current")
@@ -145,15 +146,7 @@ class GitWorktreeManager:
         changed_files: set[str] = set()
         for commit_sha in commits:
             await self._git(path, "rev-parse", "--verify", f"{commit_sha}^{{commit}}")
-            names = await self._git_text(
-                path,
-                "diff-tree",
-                "--no-commit-id",
-                "--name-only",
-                "-r",
-                commit_sha,
-            )
-            changed_files.update(item for item in names.splitlines() if item)
+            changed_files.update(await self._commit_changed_files(path, commit_sha))
             if await self._git_succeeds(
                 path,
                 "merge-base",
@@ -168,7 +161,7 @@ class GitWorktreeManager:
                 await self._git_best_effort(path, "cherry-pick", "--abort")
                 raise InvalidRepositoryError(
                     str(path),
-                    f"agent commit integration conflict for {commit_sha}: {exc.stderr}",
+                    f"agent dependency conflict for {commit_sha}: {exc.stderr}",
                 ) from exc
             applied.append(commit_sha)
 
@@ -178,6 +171,61 @@ class GitWorktreeManager:
             applied_commits=applied,
             changed_files=sorted(changed_files),
         )
+
+    async def integrate_commits(
+        self,
+        path: Path,
+        commits: list[str],
+    ) -> IntegrationResult:
+        """Stage all agent commits without committing the final run worktree."""
+        await self._verify_existing_worktree(path)
+        branch = await self._git_text(path, "branch", "--show-current")
+        if not branch:
+            raise InvalidRepositoryError(
+                str(path), "final integration requires a named worktree branch"
+            )
+
+        await self._git(path, "reset", "--hard", "HEAD")
+        await self._git(path, "clean", "-fd")
+        applied: list[str] = []
+        changed_files: set[str] = set()
+        for commit_sha in commits:
+            await self._git(path, "rev-parse", "--verify", f"{commit_sha}^{{commit}}")
+            changed_files.update(await self._commit_changed_files(path, commit_sha))
+            try:
+                await self._git(path, "cherry-pick", "--no-commit", commit_sha)
+            except GitCommandError as exc:
+                await self._git_best_effort(path, "reset", "--hard", "HEAD")
+                await self._git_best_effort(path, "clean", "-fd")
+                raise InvalidRepositoryError(
+                    str(path),
+                    f"agent commit integration conflict for {commit_sha}: {exc.stderr}",
+                ) from exc
+            applied.append(commit_sha)
+
+        staged = await self._git_text(path, "diff", "--cached", "--name-only")
+        staged_files = sorted({item for item in staged.splitlines() if item})
+        if staged_files != sorted(changed_files):
+            raise InvalidRepositoryError(
+                str(path),
+                "staged integration files do not match the agent commit manifest",
+            )
+        return IntegrationResult(
+            branch=branch,
+            applied_commits=applied,
+            changed_files=staged_files,
+        )
+
+    async def _commit_changed_files(self, path: Path, commit_sha: str) -> set[str]:
+        names = await self._git_text(
+            path,
+            "diff-tree",
+            "--no-commit-id",
+            "--name-only",
+            "-r",
+            commit_sha,
+        )
+        return {item for item in names.splitlines() if item}
 
     async def changed_files(self, path: Path) -> list[str]:
         output = await self._git_text(
@@ -303,18 +351,11 @@ class GitWorktreeManager:
             )
         await self._ensure_clean(path)
         sha = await self._git_text(path, "rev-parse", "HEAD")
-        cumulative = await self._git_text(
-            path,
-            "diff-tree",
-            "--no-commit-id",
-            "--name-only",
-            "-r",
-            "HEAD",
-        )
+        cumulative = await self._commit_changed_files(path, sha)
         return AgentCommit(
             sha=sha,
             branch=branch,
-            changed_files=[item for item in cumulative.splitlines() if item],
+            changed_files=sorted(cumulative),
         )
 
     async def _is_agent_commit(
@@ -346,18 +387,11 @@ class GitWorktreeManager:
         ):
             raise NoChangesToCommitError(str(path), "agent has no changes to commit")
         sha = await self._git_text(path, "rev-parse", "HEAD")
-        changed = await self._git_text(
-            path,
-            "diff-tree",
-            "--no-commit-id",
-            "--name-only",
-            "-r",
-            "HEAD",
-        )
+        changed = await self._commit_changed_files(path, sha)
         return AgentCommit(
             sha=sha,
             branch=branch,
-            changed_files=[item for item in changed.splitlines() if item],
+            changed_files=sorted(changed),
             reused=True,
         )
 
@@ -423,18 +457,11 @@ class GitWorktreeManager:
         if f"Orchestrator-Run: {run_id}" not in body.splitlines():
             raise NoChangesToCommitError(str(path), "worktree has no changes to commit")
         sha = await self._git_text(path, "rev-parse", "HEAD")
-        changed = await self._git_text(
-            path,
-            "diff-tree",
-            "--no-commit-id",
-            "--name-only",
-            "-r",
-            "HEAD",
-        )
+        changed = await self._commit_changed_files(path, sha)
         return DeliveryCommit(
             sha=sha,
             branch=branch,
-            changed_files=[item for item in changed.splitlines() if item],
+            changed_files=sorted(changed),
             reused=True,
         )
 
