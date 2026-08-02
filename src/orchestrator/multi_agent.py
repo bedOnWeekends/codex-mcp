@@ -42,14 +42,25 @@ def fake_agent_plan() -> AgentPlan:
                 model_tier=ModelTier.CHEAP,
             ),
             AgentSpec(
-                key="implement-core",
+                key="implement-source",
                 role=AgentRole.IMPLEMENTER,
                 instruction=(
-                    "Implement the approved plan within the owned source tree while "
-                    "preserving existing behavior outside the task scope."
+                    "Implement the approved production-code changes within the owned "
+                    "source tree while preserving unrelated behavior."
                 ),
                 depends_on=["explore-codebase"],
                 owned_paths=["src"],
+                model_tier=ModelTier.DEFAULT,
+            ),
+            AgentSpec(
+                key="implement-tests",
+                role=AgentRole.IMPLEMENTER,
+                instruction=(
+                    "Implement or update focused tests for the approved plan within "
+                    "the owned test tree."
+                ),
+                depends_on=["explore-codebase"],
+                owned_paths=["tests"],
                 model_tier=ModelTier.DEFAULT,
             ),
             AgentSpec(
@@ -57,9 +68,9 @@ def fake_agent_plan() -> AgentPlan:
                 role=AgentRole.REVIEWER,
                 instruction=(
                     "Review all implementer results for contract mismatches, missing "
-                    "tests, and integration risks. Do not modify files."
+                    "coverage, and integration risks. Do not modify files."
                 ),
-                depends_on=["implement-core"],
+                depends_on=["implement-source", "implement-tests"],
                 model_tier=ModelTier.CRITICAL,
             ),
         ]
