@@ -1,79 +1,101 @@
 from __future__ import annotations
 
-import json
 from pathlib import PurePosixPath
 
 from .schemas import (
     AgentAssignment,
+    AgentHandoff,
     AgentPlan,
     AgentRole,
     AgentSpec,
-    ModelTier,
+    ExecutionMode,
     Repository,
+    RiskLevel,
     Run,
 )
 
 
 def parse_agent_plan(text: str) -> AgentPlan:
-    normalized = text.strip()
-    if normalized.startswith("```"):
-        lines = normalized.splitlines()
-        if len(lines) >= 3 and lines[-1].strip() == "```":
-            normalized = "\n".join(lines[1:-1]).strip()
-            if normalized.startswith("json"):
-                normalized = normalized[4:].lstrip()
-    start = normalized.find("{")
-    end = normalized.rfind("}")
-    if start < 0 or end < start:
-        raise ValueError("supervisor output does not contain a JSON object")
-    return AgentPlan.model_validate_json(normalized[start : end + 1])
+    return AgentPlan.model_validate_json(_extract_json_object(text))
+
+
+def parse_agent_handoff(text: str) -> AgentHandoff:
+    try:
+        return AgentHandoff.model_validate_json(_extract_json_object(text))
+    except ValueError:
+        normalized = " ".join(text.strip().split())
+        return AgentHandoff(summary=(normalized or "Agent completed without a summary.")[:800])
 
 
 def fake_agent_plan() -> AgentPlan:
     return AgentPlan(
+        mode=ExecutionMode.SINGLE,
+        confidence=0.95,
+        requires_llm_review=False,
+        rationale="Fake mode uses one no-op implementer to exercise the cheapest path.",
         assignments=[
             AgentSpec(
-                key="explore-codebase",
-                role=AgentRole.EXPLORER,
-                instruction=(
-                    "Inspect the codebase and identify the smallest set of files and "
-                    "contracts relevant to the approved plan. Do not modify files."
-                ),
-                model_tier=ModelTier.CHEAP,
-            ),
-            AgentSpec(
-                key="implement-source",
+                key="implement-change",
                 role=AgentRole.IMPLEMENTER,
                 instruction=(
-                    "Implement the approved production-code changes within the owned "
-                    "source tree while preserving unrelated behavior."
+                    "Implement the approved change and focused tests in the smallest "
+                    "possible scope."
                 ),
-                depends_on=["explore-codebase"],
-                owned_paths=["src"],
-                model_tier=ModelTier.DEFAULT,
-            ),
+                owned_paths=[
+                    "src",
+                    "tests",
+                    "migrations",
+                    "README.md",
+                    ".env.example",
+                    "pyproject.toml",
+                ],
+            )
+        ],
+    )
+
+
+def enforce_adaptive_policy(
+    plan: AgentPlan,
+    run: Run,
+    *,
+    confidence_threshold: float,
+) -> AgentPlan:
+    implementers = [
+        item for item in plan.assignments if item.role is AgentRole.IMPLEMENTER
+    ]
+    reviewer_required = (
+        run.risk_level in {RiskLevel.HIGH, RiskLevel.CRITICAL}
+        or plan.confidence < confidence_threshold
+        or (plan.mode is ExecutionMode.PARALLEL and len(implementers) >= 3)
+    )
+    assignments = [
+        item for item in plan.assignments if item.role is AgentRole.IMPLEMENTER
+    ]
+    if reviewer_required:
+        assignments.append(
             AgentSpec(
-                key="implement-tests",
-                role=AgentRole.IMPLEMENTER,
-                instruction=(
-                    "Implement or update focused tests for the approved plan within "
-                    "the owned test tree."
-                ),
-                depends_on=["explore-codebase"],
-                owned_paths=["tests"],
-                model_tier=ModelTier.DEFAULT,
-            ),
-            AgentSpec(
-                key="review-integration",
+                key="review-change",
                 role=AgentRole.REVIEWER,
                 instruction=(
-                    "Review all implementer results for contract mismatches, missing "
-                    "coverage, and integration risks. Do not modify files."
+                    "Review the combined implementer results for correctness, contract "
+                    "mismatches, unsafe behavior, and missing tests. Report only defects "
+                    "that require action."
                 ),
-                depends_on=["implement-source", "implement-tests"],
-                model_tier=ModelTier.CRITICAL,
-            ),
-        ]
+                depends_on=[item.key for item in implementers],
+            )
+        )
+    rationale = plan.rationale
+    if reviewer_required != plan.requires_llm_review:
+        rationale = (
+            f"{rationale} Deterministic policy set LLM review to "
+            f"{str(reviewer_required).lower()}."
+        )[:600]
+    return AgentPlan(
+        mode=plan.mode,
+        confidence=plan.confidence,
+        requires_llm_review=reviewer_required,
+        rationale=rationale,
+        assignments=assignments,
     )
 
 
@@ -83,26 +105,23 @@ def build_supervisor_prompt(
     *,
     max_agents: int,
 ) -> str:
-    constraints = "\n".join(f"- {item}" for item in run.constraints) or "- None"
-    schema = json.dumps(AgentPlan.model_json_schema(), indent=2)
+    constraints = "; ".join(run.constraints) or "none"
     return (
-        "You are the supervisor for a durable multi-agent coding run. Decompose the "
-        "approved implementation plan into a small dependency DAG. Return only one "
-        "JSON object that validates against the supplied schema.\n\n"
-        "Rules:\n"
-        f"- Use between 4 and {max_agents} assignments.\n"
-        "- Include at least one explorer, two implementers, and one reviewer.\n"
-        "- Explorers and reviewers are read-only and must have no owned_paths.\n"
-        "- Implementers must have non-overlapping repository-relative owned_paths.\n"
-        "- Every reviewer must depend on every implementer.\n"
-        "- Keep assignments independently executable and minimize shared context.\n"
-        "- Do not include merge, deployment, credential, or trading actions.\n\n"
+        "Act as a low-cost repository scout and execution router. Inspect only enough "
+        "code to choose the cheapest reliable implementation shape; use at most four "
+        "focused repository inspection actions. Return only JSON matching the provided "
+        "output schema.\n\n"
+        "Default to single mode with one implementer. Choose parallel mode only when "
+        "two or three independently editable, non-overlapping path groups are proven. "
+        "Do not create a separate explorer. Set confidence from 0 to 1. The harness "
+        "decides whether an LLM reviewer is retained. Implementers must have no "
+        "dependencies and must own precise repository-relative path prefixes. Keep "
+        f"the total assignments at or below {max_agents}.\n\n"
         f"Repository: {repository.name}\n"
-        f"Default branch: {repository.default_branch}\n"
-        f"Goal:\n{run.goal}\n\n"
-        f"Constraints:\n{constraints}\n\n"
-        f"Approved plan:\n{run.plan or 'No approved plan text.'}\n\n"
-        f"JSON schema:\n{schema}"
+        f"Risk: {run.risk_level.value}\n"
+        f"Goal: {run.goal}\n"
+        f"Constraints: {constraints}\n"
+        f"Approved plan: {run.plan or 'none'}"
     )
 
 
@@ -113,35 +132,29 @@ def build_agent_prompt(
     *,
     dependency_context: list[str],
 ) -> str:
-    dependencies = "\n\n".join(dependency_context) or "No dependency output."
-    ownership = (
-        "\n".join(f"- {item}" for item in assignment.owned_paths)
-        if assignment.owned_paths
-        else "- Read-only assignment; no files may be modified."
-    )
-    role_rules = {
-        AgentRole.EXPLORER: (
-            "Inspect and report concrete findings. Do not modify files, create commits, "
-            "or broaden the task."
-        ),
-        AgentRole.IMPLEMENTER: (
-            "Modify only files covered by owned_paths. Do not commit, merge, push, "
-            "deploy, or access credentials; the orchestrator creates the local commit."
-        ),
-        AgentRole.REVIEWER: (
-            "Review the dependency results and integrated code visible in this "
-            "worktree. Do not modify files. Report actionable defects and risks."
-        ),
-    }[assignment.role]
+    dependencies = "\n".join(dependency_context) or "none"
+    ownership = ", ".join(assignment.owned_paths) or "read-only"
+    if assignment.role is AgentRole.IMPLEMENTER:
+        rules = (
+            "Edit only owned paths. Make the smallest complete patch, run focused "
+            "checks when useful, and stop once the assignment is satisfied. Do not "
+            "commit, merge, push, deploy, or access credentials."
+        )
+    else:
+        rules = (
+            "Review only. Do not modify files. Report concrete correctness or safety "
+            "defects; omit style-only commentary."
+        )
     return (
-        f"You are agent {assignment.key!r} with role {assignment.role.value}.\n"
+        f"Role: {assignment.role.value}\n"
         f"Repository: {repository.name}\n"
-        f"Run goal: {run.goal}\n\n"
-        f"Role rules:\n{role_rules}\n\n"
-        f"Owned paths:\n{ownership}\n\n"
-        f"Assignment:\n{assignment.instruction}\n\n"
-        f"Dependency context:\n{dependencies}\n\n"
-        "Return a concise summary of findings or changes and any risks."
+        f"Goal: {run.goal}\n"
+        f"Owned paths: {ownership}\n"
+        f"Assignment: {assignment.instruction}\n"
+        f"Dependency handoffs:\n{dependencies}\n"
+        f"Rules: {rules}\n"
+        "Return only JSON matching the provided handoff schema. Keep the summary under "
+        "800 characters and list only material risks and checks."
     )
 
 
@@ -171,6 +184,21 @@ def validate_agent_changes(
 
 def agent_commit_message(key: str) -> str:
     return f"chore(agent): complete {key}"
+
+
+def _extract_json_object(text: str) -> str:
+    normalized = text.strip()
+    if normalized.startswith("```"):
+        lines = normalized.splitlines()
+        if len(lines) >= 3 and lines[-1].strip() == "```":
+            normalized = "\n".join(lines[1:-1]).strip()
+            if normalized.startswith("json"):
+                normalized = normalized[4:].lstrip()
+    start = normalized.find("{")
+    end = normalized.rfind("}")
+    if start < 0 or end < start:
+        raise ValueError("model output does not contain a JSON object")
+    return normalized[start : end + 1]
 
 
 def _normalize_changed_path(value: str) -> str:
