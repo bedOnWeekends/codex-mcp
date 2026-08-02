@@ -76,7 +76,7 @@ class GitWorktreeManager:
         return await self._ensure_named_worktree(
             repository=repository,
             path=path,
-            branch=f"{self.branch_prefix}{run_id.hex}/agent-{assignment_key}",
+            branch=f"{self.branch_prefix}agent-{run_id.hex}-{assignment_key}",
         )
 
     async def prepare_agent_attempt(self, path: Path) -> None:
