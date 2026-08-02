@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from copy import deepcopy
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol, cast
@@ -35,6 +36,50 @@ class CodexRunner(Protocol):
         thread_id: str | None = None,
         output_schema: dict[str, object] | None = None,
     ) -> CodexRunResult: ...
+
+
+def normalize_output_schema(
+    output_schema: dict[str, object] | None,
+) -> JsonObject | None:
+    """Return a strict Codex-compatible copy of a JSON output schema."""
+    if output_schema is None:
+        return None
+    normalized = deepcopy(output_schema)
+    _ensure_strict_json_schema(normalized)
+    return cast(JsonObject, normalized)
+
+
+def _ensure_strict_json_schema(schema: object) -> None:
+    if not isinstance(schema, dict):
+        return
+
+    if schema.get("type") == "object" and "additionalProperties" not in schema:
+        schema["additionalProperties"] = False
+
+    properties = schema.get("properties")
+    if isinstance(properties, dict):
+        schema["required"] = list(properties)
+        for property_schema in properties.values():
+            _ensure_strict_json_schema(property_schema)
+
+    for definitions_key in ("$defs", "definitions"):
+        definitions = schema.get(definitions_key)
+        if isinstance(definitions, dict):
+            for definition_schema in definitions.values():
+                _ensure_strict_json_schema(definition_schema)
+
+    items = schema.get("items")
+    if isinstance(items, dict):
+        _ensure_strict_json_schema(items)
+
+    for union_key in ("anyOf", "allOf"):
+        variants = schema.get(union_key)
+        if isinstance(variants, list):
+            for variant in variants:
+                _ensure_strict_json_schema(variant)
+
+    if "default" in schema and schema["default"] is None:
+        schema.pop("default")
 
 
 class CodexClient:
@@ -80,7 +125,7 @@ class CodexClient:
             workspace_write=Sandbox.workspace_write,
         )
         cwd_text = str(cwd.resolve())
-        sdk_output_schema = cast(JsonObject | None, output_schema)
+        sdk_output_schema = normalize_output_schema(output_schema)
 
         async with AsyncCodex() as codex:
             if thread_id:

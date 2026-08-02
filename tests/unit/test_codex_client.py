@@ -103,7 +103,16 @@ async def test_live_adapter_passes_effort_schema_and_usage(
     _, raw_run_call = calls[2]
     _, run_kwargs = cast(tuple[str, dict[str, Any]], raw_run_call)
     assert run_kwargs["effort"] == "high"
-    assert run_kwargs["output_schema"] == schema
+    assert run_kwargs["output_schema"] == {
+        "type": "object",
+        "properties": {"summary": {"type": "string"}},
+        "required": ["summary"],
+        "additionalProperties": False,
+    }
+    assert schema == {
+        "type": "object",
+        "properties": {"summary": {"type": "string"}},
+    }
 
 
 @pytest.mark.asyncio
