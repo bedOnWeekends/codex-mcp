@@ -617,6 +617,7 @@ class CodexWorker:
             tier=profile.tier,
             input_tokens=result.input_tokens,
             cached_input_tokens=result.cached_input_tokens,
+            cache_write_tokens=result.cache_write_tokens,
             output_tokens=result.output_tokens,
         ).amount_usd
 
