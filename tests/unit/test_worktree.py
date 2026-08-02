@@ -75,6 +75,51 @@ async def test_worktree_is_isolated_and_reports_changes(tmp_path: Path) -> None:
 
 @pytest.mark.skipif(shutil.which("git") is None, reason="git is required")
 @pytest.mark.asyncio
+async def test_agent_commit_is_isolated_and_integrated_once(tmp_path: Path) -> None:
+    root = tmp_path / "repo"
+    root.mkdir()
+    initialize_repository(root)
+    repository = make_repository(root)
+    run_id = uuid4()
+    assignment_id = uuid4()
+    manager = GitWorktreeManager(branch_prefix="orchestrator/run-")
+
+    agent = await manager.ensure_agent(
+        repository=repository,
+        run_id=run_id,
+        assignment_key="implement-core",
+        path=tmp_path / "worktrees" / str(run_id) / "agents" / "implement-core",
+    )
+    source = agent.path / "src"
+    source.mkdir()
+    (source / "feature.py").write_text("ENABLED = True\n", encoding="utf-8")
+    commit = await manager.commit_agent_changes(
+        agent.path,
+        message="chore(agent): complete implement-core",
+        run_id=run_id,
+        assignment_id=assignment_id,
+    )
+
+    integration = await manager.ensure(
+        repository=repository,
+        run_id=run_id,
+        path=tmp_path / "worktrees" / str(run_id),
+    )
+    first = await manager.apply_commits(integration.path, [commit.sha])
+    repeated = await manager.apply_commits(integration.path, [commit.sha])
+
+    assert commit.branch.endswith("/agent-implement-core")
+    assert commit.changed_files == ["src/feature.py"]
+    assert first.applied_commits == [commit.sha]
+    assert first.changed_files == ["src/feature.py"]
+    assert repeated.applied_commits == []
+    assert repeated.changed_files == ["src/feature.py"]
+    assert (integration.path / "src" / "feature.py").exists()
+    assert not (root / "src" / "feature.py").exists()
+
+
+@pytest.mark.skipif(shutil.which("git") is None, reason="git is required")
+@pytest.mark.asyncio
 async def test_delivery_commit_is_local_and_idempotent(tmp_path: Path) -> None:
     root = tmp_path / "repo"
     root.mkdir()
