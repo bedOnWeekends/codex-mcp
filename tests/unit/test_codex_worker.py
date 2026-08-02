@@ -198,7 +198,9 @@ async def test_plan_task_is_completed_without_real_codex_usage(tmp_path: Path) -
 
 
 @pytest.mark.asyncio
-async def test_fake_supervisor_creates_validated_agent_dag(tmp_path: Path) -> None:
+async def test_fake_supervisor_creates_parallel_validated_agent_dag(
+    tmp_path: Path,
+) -> None:
     repository, run, task = make_objects(
         tmp_path,
         kind=TaskKind.SUPERVISE,
@@ -217,10 +219,11 @@ async def test_fake_supervisor_creates_validated_agent_dag(tmp_path: Path) -> No
     assert [item.role for item in plan.assignments] == [
         AgentRole.EXPLORER,
         AgentRole.IMPLEMENTER,
+        AgentRole.IMPLEMENTER,
         AgentRole.REVIEWER,
     ]
     assert call.kwargs["agents_root"] == (
-        tmp_path / "runtime" / "worktrees" / str(run.id) / "agents"
+        tmp_path / "runtime" / "worktrees" / "agents" / str(run.id)
     ).resolve()
     store.fail_or_retry_task.assert_not_awaited()
 
