@@ -40,7 +40,7 @@ class Settings(BaseSettings):
     artifacts_dir: Path | None = None
     logs_dir: Path | None = None
     max_parallel_workers: int = Field(default=3, ge=1, le=16)
-    max_agents_per_run: int = Field(default=8, ge=3, le=8)
+    max_agents_per_run: int = Field(default=8, ge=4, le=8)
     max_attempts_per_task: int = Field(default=2, ge=1, le=10)
     max_replans: int = Field(default=1, ge=0, le=5)
     max_fix_cycles: int = Field(default=2, ge=0, le=10)
