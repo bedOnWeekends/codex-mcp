@@ -12,10 +12,12 @@ from orchestrator.control_service import RunControlService
 from orchestrator.mcp_schemas import (
     ApproveDeliveryInput,
     ApprovePlanInput,
+    ApprovePublishInput,
     CancelRunInput,
     CreateRunInput,
+    FinishRunInput,
 )
-from orchestrator.phase5_store import Phase5Store
+from orchestrator.phase6_store import Phase6Store
 from orchestrator.schemas import (
     Approval,
     ApprovalType,
@@ -79,6 +81,8 @@ class FakeStore:
         self.approved_worktree_path: Path | None = None
         self.delivery_worktree_path: Path | None = None
         self.delivery_commit_message: str | None = None
+        self.publish_worktree_path: Path | None = None
+        self.publish_title: str | None = None
 
     async def list_repositories(self) -> list[Repository]:
         return [self.repository]
@@ -135,33 +139,15 @@ class FakeStore:
         assert model_tier is ModelTier.DEFAULT
         assert max_attempts == 2
         self.approved_worktree_path = worktree_path
-        now = datetime.now(UTC)
-        implementation = self.task.model_copy(
-            update={
-                "id": uuid4(),
-                "kind": TaskKind.IMPLEMENT,
-                "status": TaskStatus.QUEUED,
-                "worktree_path": worktree_path,
-                "priority": 90,
-            }
-        )
-        approved_run = self.run.model_copy(
-            update={
-                "status": RunStatus.EXECUTING,
-                "version": self.run.version + 1,
-                "current_task_id": implementation.id,
-            }
-        )
-        approval = Approval(
-            id=uuid4(),
-            run_id=run_id,
-            type=ApprovalType.PLAN,
-            approved=True,
+        return self._queued_outcome(
+            kind=TaskKind.IMPLEMENT,
+            status=RunStatus.EXECUTING,
+            instruction=instruction,
+            worktree_path=worktree_path,
+            approval_type=ApprovalType.PLAN,
             notes=notes,
             expected_version=expected_version,
-            created_at=now,
         )
-        return approved_run, implementation, approval
 
     async def approve_delivery_and_queue_task(
         self,
@@ -179,34 +165,76 @@ class FakeStore:
         assert max_attempts == 2
         self.delivery_worktree_path = worktree_path
         self.delivery_commit_message = commit_message
-        now = datetime.now(UTC)
-        delivery = self.task.model_copy(
-            update={
-                "id": uuid4(),
-                "kind": TaskKind.DELIVER,
-                "instruction": commit_message,
-                "status": TaskStatus.QUEUED,
-                "worktree_path": worktree_path,
-                "priority": 70,
-            }
+        return self._queued_outcome(
+            kind=TaskKind.DELIVER,
+            status=RunStatus.DELIVERING,
+            instruction=commit_message,
+            worktree_path=worktree_path,
+            approval_type=ApprovalType.DELIVERY,
+            notes=notes,
+            expected_version=expected_version,
         )
-        delivering_run = self.run.model_copy(
+
+    async def approve_publish_and_queue_task(
+        self,
+        run_id: UUID,
+        *,
+        expected_version: int,
+        title: str,
+        body: str,
+        draft: bool,
+        notes: str | None,
+        max_attempts: int,
+        worktree_path: Path,
+        allow_noop: bool,
+    ) -> tuple[Run, Task, Approval]:
+        assert run_id == self.run.id
+        assert expected_version == self.run.version
+        assert title == "feat: add quote lookup"
+        assert body == "Generated change"
+        assert draft is True
+        assert notes == "publish it"
+        assert max_attempts == 2
+        assert allow_noop is True
+        self.publish_worktree_path = worktree_path
+        self.publish_title = title
+        return self._queued_outcome(
+            kind=TaskKind.PUBLISH,
+            status=RunStatus.PUBLISHING,
+            instruction=title,
+            worktree_path=worktree_path,
+            approval_type=ApprovalType.PUBLISH,
+            notes=notes,
+            expected_version=expected_version,
+        )
+
+    async def finish_without_publish(
+        self,
+        run_id: UUID,
+        *,
+        expected_version: int,
+        notes: str | None,
+    ) -> tuple[Run, Approval]:
+        assert run_id == self.run.id
+        assert expected_version == self.run.version
+        assert notes == "keep local"
+        now = datetime.now(UTC)
+        completed = self.run.model_copy(
             update={
-                "status": RunStatus.DELIVERING,
+                "status": RunStatus.COMPLETED,
                 "version": self.run.version + 1,
-                "current_task_id": delivery.id,
             }
         )
         approval = Approval(
             id=uuid4(),
             run_id=run_id,
-            type=ApprovalType.DELIVERY,
-            approved=True,
+            type=ApprovalType.PUBLISH,
+            approved=False,
             notes=notes,
             expected_version=expected_version,
             created_at=now,
         )
-        return delivering_run, delivery, approval
+        return completed, approval
 
     async def cancel_run(
         self,
@@ -223,6 +251,45 @@ class FakeStore:
         )
         return canceled, [self.task.id]
 
+    def _queued_outcome(
+        self,
+        *,
+        kind: TaskKind,
+        status: RunStatus,
+        instruction: str,
+        worktree_path: Path,
+        approval_type: ApprovalType,
+        notes: str | None,
+        expected_version: int,
+    ) -> tuple[Run, Task, Approval]:
+        now = datetime.now(UTC)
+        queued = self.task.model_copy(
+            update={
+                "id": uuid4(),
+                "kind": kind,
+                "instruction": instruction,
+                "status": TaskStatus.QUEUED,
+                "worktree_path": worktree_path,
+            }
+        )
+        updated_run = self.run.model_copy(
+            update={
+                "status": status,
+                "version": self.run.version + 1,
+                "current_task_id": queued.id,
+            }
+        )
+        approval = Approval(
+            id=uuid4(),
+            run_id=self.run.id,
+            type=approval_type,
+            approved=True,
+            notes=notes,
+            expected_version=expected_version,
+            created_at=now,
+        )
+        return updated_run, queued, approval
+
 
 def make_service(fake: FakeStore, *, runtime_dir: Path) -> RunControlService:
     settings = Settings(
@@ -230,7 +297,7 @@ def make_service(fake: FakeStore, *, runtime_dir: Path) -> RunControlService:
         database_url="postgresql+asyncpg://u:p@localhost/test",
         runtime_dir=runtime_dir,
     )
-    return RunControlService(cast(Phase5Store, fake), settings)
+    return RunControlService(cast(Phase6Store, fake), settings)
 
 
 @pytest.mark.asyncio
@@ -288,9 +355,47 @@ async def test_approve_delivery_queues_local_commit_task(tmp_path: Path) -> None
     assert output.status is RunStatus.DELIVERING
     assert output.delivery_task_status is TaskStatus.QUEUED
     assert fake.delivery_commit_message == "feat: add quote lookup"
-    assert fake.delivery_worktree_path == tmp_path.resolve() / "worktrees" / str(
+
+
+@pytest.mark.asyncio
+async def test_approve_publish_queues_publication_task(tmp_path: Path) -> None:
+    fake = FakeStore()
+    fake.run = fake.run.model_copy(
+        update={"status": RunStatus.AWAITING_PUBLISH_APPROVAL}
+    )
+    output = await make_service(fake, runtime_dir=tmp_path).approve_publish(
+        ApprovePublishInput(
+            run_id=fake.run.id,
+            expected_version=fake.run.version,
+            title="feat: add quote lookup",
+            body="Generated change",
+            draft=True,
+            notes="publish it",
+        )
+    )
+    assert output.status is RunStatus.PUBLISHING
+    assert output.publish_task_status is TaskStatus.QUEUED
+    assert fake.publish_title == "feat: add quote lookup"
+    assert fake.publish_worktree_path == tmp_path.resolve() / "worktrees" / str(
         fake.run.id
     )
+
+
+@pytest.mark.asyncio
+async def test_finish_run_keeps_delivery_local(tmp_path: Path) -> None:
+    fake = FakeStore()
+    fake.run = fake.run.model_copy(
+        update={"status": RunStatus.AWAITING_PUBLISH_APPROVAL}
+    )
+    output = await make_service(fake, runtime_dir=tmp_path).finish_run(
+        FinishRunInput(
+            run_id=fake.run.id,
+            expected_version=fake.run.version,
+            notes="keep local",
+        )
+    )
+    assert output.status is RunStatus.COMPLETED
+    assert output.version == fake.run.version + 1
 
 
 @pytest.mark.asyncio
