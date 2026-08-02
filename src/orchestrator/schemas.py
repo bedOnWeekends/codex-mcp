@@ -138,9 +138,13 @@ class AgentSpec(OrchestratorModel):
                 or path.is_absolute()
                 or ".." in path.parts
                 or ".git" in path.parts
-                or any(token in candidate for token in ("\x00", ":", "*", "?", "[", "]"))
+                or any(
+                    token in candidate for token in ("\x00", ":", "*", "?", "[", "]")
+                )
             ):
-                raise ValueError("owned paths must be safe repository-relative prefixes")
+                raise ValueError(
+                    "owned paths must be safe repository-relative prefixes"
+                )
             item = path.as_posix().rstrip("/")
             if item not in normalized:
                 normalized.append(item)

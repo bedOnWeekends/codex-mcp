@@ -90,13 +90,7 @@ async def test_agent_retry_amends_and_integration_creates_one_delivery_commit(
         repository=repository,
         run_id=run_id,
         assignment_key="implement-core",
-        path=(
-            tmp_path
-            / "worktrees"
-            / "agents"
-            / str(run_id)
-            / "implement-core"
-        ),
+        path=(tmp_path / "worktrees" / "agents" / str(run_id) / "implement-core"),
     )
     source = agent.path / "src"
     source.mkdir()

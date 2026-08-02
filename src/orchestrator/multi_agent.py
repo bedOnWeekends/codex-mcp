@@ -91,8 +91,7 @@ def enforce_adaptive_policy(
         or mode is not plan.mode
     ):
         suffix = (
-            f" Deterministic policy set LLM review to "
-            f"{str(desired_reviewer).lower()}."
+            f" Deterministic policy set LLM review to {str(desired_reviewer).lower()}."
         )
         if collapsed_for_review:
             suffix += " Parallel scopes were combined to preserve the Sol review slot."
