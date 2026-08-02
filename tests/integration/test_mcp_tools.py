@@ -40,9 +40,15 @@ async def test_tools_publish_structured_output_and_annotations() -> None:
         "get_run",
         "cancel_run",
     }
-    assert tools["list_repositories"].annotations.readOnlyHint is True
-    assert tools["approve_plan"].annotations.destructiveHint is True
-    assert tools["cancel_run"].annotations.destructiveHint is True
+    list_annotations = tools["list_repositories"].annotations
+    approve_annotations = tools["approve_plan"].annotations
+    cancel_annotations = tools["cancel_run"].annotations
+    assert list_annotations is not None
+    assert approve_annotations is not None
+    assert cancel_annotations is not None
+    assert list_annotations.readOnlyHint is True
+    assert approve_annotations.destructiveHint is True
+    assert cancel_annotations.destructiveHint is True
     assert tools["create_run"].outputSchema is not None
 
     result = await mcp.call_tool("list_repositories", {})

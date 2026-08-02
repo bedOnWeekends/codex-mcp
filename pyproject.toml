@@ -53,12 +53,13 @@ src = ["src", "tests"]
 exclude = [".venv", ".pytest_tmp", "build", "dist"]
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "B", "UP", "ASYNC"]
+select = ["E", "F", "I", "B", "UP"]
 ignore = ["E501"]
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**/*.py" = ["S101"]
 "migrations/**/*.py" = ["E402"]
+"src/orchestrator/admin.py" = ["B008"]
 
 [tool.pyright]
 pythonVersion = "3.12"

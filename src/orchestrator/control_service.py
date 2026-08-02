@@ -14,15 +14,15 @@ from .mcp_schemas import (
     RepositorySummary,
     TaskSummary,
 )
+from .phase4_store import Phase4Store
 from .schemas import ModelTier, RiskLevel, RunCreate
 from .settings import Settings
-from .store import Store
 
 
 class RunControlService:
     """Application service used by MCP tools and future local clients."""
 
-    def __init__(self, store: Store, settings: Settings) -> None:
+    def __init__(self, store: Phase4Store, settings: Settings) -> None:
         self._store = store
         self._settings = settings
 

@@ -10,6 +10,7 @@ import pytest
 
 from orchestrator.control_service import RunControlService
 from orchestrator.mcp_schemas import ApprovePlanInput, CancelRunInput, CreateRunInput
+from orchestrator.phase4_store import Phase4Store
 from orchestrator.schemas import (
     Approval,
     ApprovalType,
@@ -24,7 +25,6 @@ from orchestrator.schemas import (
     TaskStatus,
 )
 from orchestrator.settings import Settings
-from orchestrator.store import Store
 
 
 class FakeStore:
@@ -178,7 +178,7 @@ def make_service(fake: FakeStore, *, runtime_dir: Path) -> RunControlService:
         database_url="postgresql+asyncpg://u:p@localhost/test",
         runtime_dir=runtime_dir,
     )
-    return RunControlService(cast(Store, fake), settings)
+    return RunControlService(cast(Phase4Store, fake), settings)
 
 
 @pytest.mark.asyncio

@@ -11,9 +11,9 @@ from .artifacts import ArtifactWriter
 from .codex_client import CodexClient, CodexRunner, FakeCodexClient
 from .context_builder import build_task_prompt
 from .model_router import choose_model
+from .phase4_store import Phase4Store
 from .schemas import ArtifactKind, Repository, Run, Task, TaskKind
 from .settings import Settings
-from .store import Store
 from .verification import VerificationRunner
 from .worktree import GitWorktreeManager
 
@@ -24,7 +24,7 @@ ClientFactory = Callable[[Task, Run], CodexRunner]
 class CodexWorker:
     def __init__(
         self,
-        store: Store,
+        store: Phase4Store,
         settings: Settings,
         *,
         worktrees: GitWorktreeManager | None = None,
