@@ -5,7 +5,7 @@ from decimal import Decimal
 from pathlib import Path
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from .db_models import (
     AgentAssignmentModel,
@@ -25,6 +25,7 @@ from .schemas import (
     AgentSpec,
     Approval,
     ApprovalType,
+    ExecutionMode,
     ModelTier,
     Run,
     RunStatus,
@@ -37,7 +38,7 @@ from .state_machine import ensure_run_transition, ensure_task_transition
 
 
 class Phase7Store(Phase6Store):
-    """Durable supervisor, agent DAG, and integration workflow operations."""
+    """Durable adaptive-agent and integration workflow operations."""
 
     async def approve_plan_and_queue_supervision(
         self,
@@ -80,7 +81,7 @@ class Phase7Store(Phase6Store):
                 session,
                 run_id=run_id,
                 task_id=task.id,
-                event_type="run.multi_agent_plan_approved",
+                event_type="run.adaptive_plan_approved",
                 payload={"approval_notes": notes},
             )
             await session.flush()
@@ -122,6 +123,7 @@ class Phase7Store(Phase6Store):
             session.add(result)
 
             run = await self._locked_run(session, task.run_id)
+            self._charge_run(run, estimated_cost_usd)
             ensure_run_transition(RunStatus(run.status), RunStatus.EXECUTING)
             assignments: list[AgentAssignmentModel] = []
             for spec in plan.topological_order():
@@ -133,7 +135,11 @@ class Phase7Store(Phase6Store):
                     instruction=spec.instruction,
                     depends_on=spec.depends_on,
                     owned_paths=spec.owned_paths,
-                    model_tier=spec.model_tier.value,
+                    model_tier=(
+                        ModelTier.CRITICAL.value
+                        if spec.role is AgentRole.REVIEWER
+                        else ModelTier.DEFAULT.value
+                    ),
                     worktree_path=str((agents_root / spec.key).resolve()),
                 )
                 session.add(assignment)
@@ -141,9 +147,8 @@ class Phase7Store(Phase6Store):
             await session.flush()
 
             queued_tasks: list[TaskModel] = []
-            for assignment in assignments:
-                if assignment.depends_on:
-                    continue
+            ready_assignments = [item for item in assignments if not item.depends_on]
+            for assignment in ready_assignments:
                 queued = self._queue_assignment_task(
                     assignment,
                     max_attempts=max_attempts,
@@ -152,7 +157,7 @@ class Phase7Store(Phase6Store):
                 queued_tasks.append(queued)
             await session.flush()
             for assignment, queued in zip(
-                [item for item in assignments if not item.depends_on],
+                ready_assignments,
                 queued_tasks,
                 strict=True,
             ):
@@ -160,17 +165,19 @@ class Phase7Store(Phase6Store):
                 assignment.status = AgentAssignmentStatus.QUEUED.value
 
             run.status = RunStatus.EXECUTING.value
-            run.current_task_id = queued_tasks[0].id if queued_tasks else task_id
-            run.spent_cost_usd += estimated_cost_usd
+            run.current_task_id = queued_tasks[0].id
             run.version += 1
             self._event(
                 session,
                 run_id=run.id,
                 task_id=task_id,
-                event_type="run.agent_dag_created",
+                event_type="run.adaptive_agent_plan_created",
                 payload={
+                    "mode": plan.mode.value,
+                    "confidence": plan.confidence,
+                    "requires_llm_review": plan.requires_llm_review,
                     "assignments": [item.key for item in assignments],
-                    "ready": [item.key for item in assignments if not item.depends_on],
+                    "ready": [item.key for item in ready_assignments],
                 },
             )
             await session.flush()
@@ -230,6 +237,18 @@ class Phase7Store(Phase6Store):
             await session.refresh(model)
             return self._task(model)
 
+    async def total_tokens_for_run(self, run_id: UUID) -> int:
+        async with self._session_factory() as session:
+            total = await session.scalar(
+                select(
+                    func.coalesce(
+                        func.sum(TaskModel.input_tokens + TaskModel.output_tokens),
+                        0,
+                    )
+                ).where(TaskModel.run_id == run_id)
+            )
+            return int(total or 0)
+
     async def get_agent_assignment_for_task(
         self,
         task_id: UUID,
@@ -263,6 +282,8 @@ class Phase7Store(Phase6Store):
     async def dependency_context_for_assignment(
         self,
         assignment_id: UUID,
+        *,
+        max_summary_chars: int,
     ) -> list[str]:
         async with self._session_factory() as session:
             assignment = await session.get(AgentAssignmentModel, assignment_id)
@@ -293,9 +314,9 @@ class Phase7Store(Phase6Store):
                     )
                 summary = result.summary if result is not None else "No result summary."
                 contexts.append(
-                    f"Agent {key} ({dependency.role})\n"
-                    f"Commit: {dependency.commit_sha or 'none'}\n"
-                    f"Summary: {summary}"
+                    f"{key}|{dependency.role}|{dependency.commit_sha or 'none'}|"
+                    f"files={','.join(dependency.changed_files)}|"
+                    f"summary={summary[:max_summary_chars]}"
                 )
             return contexts
 
@@ -342,7 +363,10 @@ class Phase7Store(Phase6Store):
             )
             if assignment is None:
                 raise EntityNotFoundError("agent_assignment_for_task", task_id)
-            if AgentAssignmentStatus(assignment.status) is not AgentAssignmentStatus.RUNNING:
+            if (
+                AgentAssignmentStatus(assignment.status)
+                is not AgentAssignmentStatus.RUNNING
+            ):
                 raise ValueError("agent assignment is not running")
 
             self._complete_task(
@@ -369,6 +393,7 @@ class Phase7Store(Phase6Store):
             assignment.completed_at = datetime.now(UTC)
 
             run = await self._locked_run(session, task.run_id)
+            self._charge_run(run, estimated_cost_usd)
             models = list(
                 await session.scalars(
                     select(AgentAssignmentModel)
@@ -379,7 +404,10 @@ class Phase7Store(Phase6Store):
             by_key = {item.key: item for item in models}
             newly_queued: list[TaskModel] = []
             for candidate in models:
-                if AgentAssignmentStatus(candidate.status) is not AgentAssignmentStatus.BLOCKED:
+                if (
+                    AgentAssignmentStatus(candidate.status)
+                    is not AgentAssignmentStatus.BLOCKED
+                ):
                     continue
                 if all(
                     AgentAssignmentStatus(by_key[key].status)
@@ -406,7 +434,7 @@ class Phase7Store(Phase6Store):
                     run_id=run.id,
                     kind=TaskKind.INTEGRATE,
                     instruction="Integrate completed agent commits in dependency order.",
-                    model_tier=ModelTier.CRITICAL,
+                    model_tier=ModelTier.DEFAULT,
                     max_attempts=max_attempts,
                     priority=85,
                     worktree_path=integration_worktree_path,
@@ -416,13 +444,10 @@ class Phase7Store(Phase6Store):
                 run.status = RunStatus.INTEGRATING.value
                 run.current_task_id = integration.id
                 newly_queued.append(integration)
-                event_type = "run.agent_dag_completed"
+                event_type = "run.adaptive_agents_completed"
             else:
-                run.current_task_id = (
-                    newly_queued[0].id if newly_queued else task_id
-                )
+                run.current_task_id = newly_queued[0].id if newly_queued else task_id
                 event_type = "agent.assignment_completed"
-            run.spent_cost_usd += estimated_cost_usd
             run.version += 1
             self._event(
                 session,
@@ -459,11 +484,22 @@ class Phase7Store(Phase6Store):
                 instruction=item.instruction,
                 depends_on=item.depends_on,
                 owned_paths=item.owned_paths,
-                model_tier=item.model_tier,
             )
             for item in assignments
         ]
-        order = AgentPlan(assignments=specs).topological_order()
+        implementers = [item for item in assignments if item.role is AgentRole.IMPLEMENTER]
+        reviewers = [item for item in assignments if item.role is AgentRole.REVIEWER]
+        order = AgentPlan(
+            mode=(
+                ExecutionMode.PARALLEL
+                if len(implementers) > 1
+                else ExecutionMode.SINGLE
+            ),
+            confidence=1,
+            requires_llm_review=bool(reviewers),
+            rationale="Reconstructed persisted adaptive plan for integration.",
+            assignments=specs,
+        ).topological_order()
         by_key = {item.key: item for item in assignments}
         commits: list[str] = []
         for spec in order:
@@ -506,7 +542,7 @@ class Phase7Store(Phase6Store):
                 run_id=task.run_id,
                 kind=TaskKind.REVIEW,
                 instruction=review_instruction,
-                model_tier=ModelTier.CRITICAL,
+                model_tier=ModelTier.DEFAULT,
                 max_attempts=review_max_attempts,
                 priority=80,
                 worktree_path=Path(task.worktree_path),
@@ -564,8 +600,12 @@ class Phase7Store(Phase6Store):
                     if outcome.retried
                     else AgentAssignmentStatus.FAILED.value
                 )
-                assignment.started_at = None if outcome.retried else assignment.started_at
-                assignment.completed_at = None if outcome.retried else datetime.now(UTC)
+                assignment.started_at = (
+                    None if outcome.retried else assignment.started_at
+                )
+                assignment.completed_at = (
+                    None if outcome.retried else datetime.now(UTC)
+                )
         return outcome
 
     async def cancel_run(
@@ -614,7 +654,7 @@ class Phase7Store(Phase6Store):
             instruction=f"Execute agent assignment {assignment.key}",
             model_tier=ModelTier(assignment.model_tier),
             max_attempts=max_attempts,
-            priority=90 if assignment.role == AgentRole.IMPLEMENTER.value else 75,
+            priority=90 if assignment.role == AgentRole.IMPLEMENTER.value else 70,
             worktree_path=(
                 Path(assignment.worktree_path) if assignment.worktree_path else None
             ),
@@ -635,7 +675,10 @@ class Phase7Store(Phase6Store):
             dependency = by_key.get(key)
             if dependency is None:
                 raise ValueError(f"missing agent dependency {key!r}")
-            if AgentAssignmentStatus(dependency.status) is not AgentAssignmentStatus.COMPLETED:
+            if (
+                AgentAssignmentStatus(dependency.status)
+                is not AgentAssignmentStatus.COMPLETED
+            ):
                 raise ValueError(f"agent dependency {key!r} is not completed")
             for parent in dependency.depends_on:
                 visit(parent)
@@ -646,6 +689,15 @@ class Phase7Store(Phase6Store):
         for key in assignment.depends_on:
             visit(key)
         return ordered
+
+    @staticmethod
+    def _charge_run(run: RunModel, amount: Decimal) -> None:
+        projected = run.spent_cost_usd + amount
+        if projected > run.max_cost_usd:
+            raise ValueError(
+                f"run cost budget exceeded: {projected} > {run.max_cost_usd}"
+            )
+        run.spent_cost_usd = projected
 
     @staticmethod
     def _agent_assignment(model: AgentAssignmentModel) -> AgentAssignment:
