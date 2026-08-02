@@ -4,7 +4,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Literal
 
-from pydantic import Field, field_validator, model_validator
+from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -54,6 +54,12 @@ class Settings(BaseSettings):
     codex_sandbox_mode: str = "workspace-write"
     verification_timeout_seconds: int = Field(default=300, ge=1, le=3600)
     worktree_branch_prefix: str = "orchestrator/run-"
+    github_publish_mode: Literal["fake", "live"] = "fake"
+    github_token: SecretStr | None = Field(default=None, repr=False)
+    github_remote_name: str = "origin"
+    github_api_url: str = "https://api.github.com"
+    github_api_version: str = "2026-03-10"
+    github_request_timeout_seconds: float = Field(default=30.0, gt=0, le=300)
 
     @field_validator("codex_approval_policy")
     @classmethod
@@ -109,6 +115,24 @@ class Settings(BaseSettings):
             raise ValueError("worktree_branch_prefix must not be empty")
         if normalized.startswith("-") or " " in normalized:
             raise ValueError("worktree_branch_prefix is not a safe Git ref prefix")
+        return normalized
+
+    @field_validator("github_remote_name")
+    @classmethod
+    def validate_github_remote_name(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized or normalized.startswith("-"):
+            raise ValueError("github_remote_name must be a safe Git remote name")
+        if any(character.isspace() for character in normalized):
+            raise ValueError("github_remote_name must not contain whitespace")
+        return normalized
+
+    @field_validator("github_api_url")
+    @classmethod
+    def validate_github_api_url(cls, value: str) -> str:
+        normalized = value.strip().rstrip("/")
+        if normalized != "https://api.github.com":
+            raise ValueError("Phase 6 supports only https://api.github.com")
         return normalized
 
     @model_validator(mode="after")
