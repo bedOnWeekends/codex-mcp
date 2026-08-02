@@ -13,6 +13,8 @@ from pydantic import ValidationError
 from .control_service import RunControlService
 from .errors import OrchestratorError
 from .mcp_schemas import (
+    ApproveDeliveryInput,
+    ApproveDeliveryOutput,
     ApprovePlanInput,
     ApprovePlanOutput,
     CancelRunInput,
@@ -119,6 +121,40 @@ def register_mcp_tools(
             notes=notes,
         )
         return await _safe_call("approve_plan", service.approve_plan(request))
+
+    @mcp.tool(
+        name="approve_delivery",
+        title="Approve Verified Local Delivery Commit",
+        description=(
+            "Approve a verification-passed run using its latest version and queue a "
+            "second verification followed by a local commit in the isolated worktree. "
+            "The commit message must follow the repository Conventional Commit "
+            "convention. This never pushes, opens a pull request, or merges."
+        ),
+        annotations=ToolAnnotations(
+            readOnlyHint=False,
+            destructiveHint=True,
+            idempotentHint=False,
+            openWorldHint=False,
+        ),
+        structured_output=True,
+    )
+    async def approve_delivery(
+        run_id: UUID,
+        expected_version: int,
+        commit_message: str,
+        notes: str | None = None,
+    ) -> ApproveDeliveryOutput:
+        request = ApproveDeliveryInput(
+            run_id=run_id,
+            expected_version=expected_version,
+            commit_message=commit_message,
+            notes=notes,
+        )
+        return await _safe_call(
+            "approve_delivery",
+            service.approve_delivery(request),
+        )
 
     @mcp.tool(
         name="get_run",
