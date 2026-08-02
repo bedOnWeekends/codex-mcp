@@ -52,7 +52,7 @@ finish_run or approve_publish
 ```
 
 The global `ORCH_MAX_PARALLEL_WORKERS` setting bounds actual concurrency. A run may
-contain at most `ORCH_MAX_AGENTS_PER_RUN` assignments, currently restricted to 3–8.
+contain `ORCH_MAX_AGENTS_PER_RUN` assignments, restricted to 4–8.
 
 ## Durable agent contract
 
