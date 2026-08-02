@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Awaitable
 from decimal import Decimal
-from typing import Any
+from typing import Any, Literal
 from uuid import UUID
 
 from mcp.server.fastmcp import FastMCP
@@ -166,7 +166,7 @@ def register_mcp_tools(
         description=(
             "Approve publication of the delivered local run branch. In live mode this "
             "pushes only that branch to the registered repository origin and creates "
-            "or reuses a GitHub pull request. The title must follow the project "
+            "or reuses a GitHub draft pull request. The title must follow the project "
             "Conventional Commit convention. This never merges the pull request."
         ),
         annotations=ToolAnnotations(
@@ -182,7 +182,7 @@ def register_mcp_tools(
         expected_version: int,
         title: str,
         body: str = "",
-        draft: bool = True,
+        draft: Literal[True] = True,
         notes: str | None = None,
     ) -> ApprovePublishOutput:
         request = ApprovePublishInput(
