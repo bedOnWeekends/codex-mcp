@@ -203,6 +203,7 @@ class GitWorktreeManager:
                 ) from exc
             applied.append(commit_sha)
 
+        await self._git(path, "diff", "--cached", "--check")
         staged = await self._git_text(path, "diff", "--cached", "--name-only")
         staged_files = sorted({item for item in staged.splitlines() if item})
         if staged_files != sorted(changed_files):
@@ -272,7 +273,21 @@ class GitWorktreeManager:
             "--porcelain=v1",
             "--untracked-files=all",
         )
-        digest = hashlib.sha256(status.encode("utf-8", errors="replace"))
+        staged = await self._git_text(
+            path,
+            "diff",
+            "--cached",
+            "--binary",
+            "HEAD",
+        )
+        unstaged = await self._git_text(path, "diff", "--binary")
+        digest = hashlib.sha256()
+        digest.update(b"status\0")
+        digest.update(status.encode("utf-8", errors="replace"))
+        digest.update(b"\0staged\0")
+        digest.update(staged.encode("utf-8", errors="replace"))
+        digest.update(b"\0unstaged\0")
+        digest.update(unstaged.encode("utf-8", errors="replace"))
         for relative_path in sorted(await self.changed_files(path)):
             digest.update(b"\0path\0")
             digest.update(relative_path.encode("utf-8", errors="replace"))
@@ -321,6 +336,7 @@ class GitWorktreeManager:
 
         await self._git(path, "diff", "--check")
         await self._git(path, "add", "--all")
+        await self._git(path, "diff", "--cached", "--check")
         if not await self._git_text(path, "diff", "--cached", "--name-only"):
             raise NoChangesToCommitError(str(path), "agent has no staged changes")
         identity = [
@@ -418,7 +434,9 @@ class GitWorktreeManager:
             )
 
         await self._git(path, "diff", "--check")
+        await self._git(path, "diff", "--cached", "--check")
         await self._git(path, "add", "--all")
+        await self._git(path, "diff", "--cached", "--check")
         staged_files = await self._git_text(path, "diff", "--cached", "--name-only")
         if not staged_files:
             raise NoChangesToCommitError(
