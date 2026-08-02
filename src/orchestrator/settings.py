@@ -105,6 +105,13 @@ class Settings(BaseSettings):
     projected_call_cost_usd_critical: Decimal = Field(
         default=Decimal("1.00"), ge=0
     )
+    projected_call_tokens_cheap: int = Field(default=12_000, ge=1_000, le=500_000)
+    projected_call_tokens_default: int = Field(
+        default=60_000, ge=1_000, le=1_000_000
+    )
+    projected_call_tokens_critical: int = Field(
+        default=100_000, ge=1_000, le=2_000_000
+    )
     budget_reserve_usd: Decimal = Field(default=Decimal("0.05"), ge=0)
 
     verification_timeout_seconds: int = Field(default=300, ge=1, le=3600)
