@@ -292,7 +292,7 @@ async def test_implementer_agent_uses_isolated_worktree_and_completes_fake_noop(
 
 
 @pytest.mark.asyncio
-async def test_integrator_applies_agent_commits_and_queues_review(tmp_path: Path) -> None:
+async def test_integrator_stages_agent_commits_and_queues_review(tmp_path: Path) -> None:
     repository, run, task = make_objects(
         tmp_path,
         kind=TaskKind.INTEGRATE,
@@ -311,7 +311,7 @@ async def test_integrator_applies_agent_commits_and_queues_review(tmp_path: Path
         path=worktree_path,
         branch="orchestrator/run-test",
     )
-    worktrees.apply_commits.return_value = IntegrationResult(
+    worktrees.integrate_commits.return_value = IntegrationResult(
         branch="orchestrator/run-test",
         applied_commits=commits,
         changed_files=["src/a.py", "src/b.py"],
@@ -319,7 +319,7 @@ async def test_integrator_applies_agent_commits_and_queues_review(tmp_path: Path
     worker = CodexWorker(store, settings(tmp_path), worktrees=worktrees)
 
     assert await worker.process_one() is True
-    worktrees.apply_commits.assert_awaited_once_with(worktree_path, commits)
+    worktrees.integrate_commits.assert_awaited_once_with(worktree_path, commits)
     store.complete_integration_task.assert_awaited_once()
     store.fail_or_retry_task.assert_not_awaited()
 
