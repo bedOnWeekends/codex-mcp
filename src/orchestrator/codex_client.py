@@ -6,7 +6,10 @@ from pathlib import Path
 from typing import Protocol
 from uuid import uuid4
 
-from .settings import ReasoningEffort
+from openai_codex.types import JsonObject
+from openai_codex.types import ReasoningEffort as SdkReasoningEffort
+
+from .settings import ReasoningEffort as ConfigReasoningEffort
 
 
 class CodexSdkUnavailableError(RuntimeError):
@@ -30,7 +33,7 @@ class CodexRunner(Protocol):
         prompt: str,
         cwd: Path,
         thread_id: str | None = None,
-        output_schema: dict[str, object] | None = None,
+        output_schema: JsonObject | None = None,
     ) -> CodexRunResult: ...
 
 
@@ -41,12 +44,12 @@ class CodexClient:
         self,
         *,
         model: str,
-        effort: ReasoningEffort,
+        effort: ConfigReasoningEffort,
         approval_policy: str,
         sandbox_mode: str,
     ) -> None:
         self.model = model
-        self.effort = effort
+        self.effort = SdkReasoningEffort(effort)
         self.approval_policy = approval_policy
         self.sandbox_mode = sandbox_mode
 
@@ -56,7 +59,7 @@ class CodexClient:
         prompt: str,
         cwd: Path,
         thread_id: str | None = None,
-        output_schema: dict[str, object] | None = None,
+        output_schema: JsonObject | None = None,
     ) -> CodexRunResult:
         try:
             from openai_codex import ApprovalMode, AsyncCodex, Sandbox
@@ -164,7 +167,7 @@ class FakeCodexClient:
         prompt: str,
         cwd: Path,
         thread_id: str | None = None,
-        output_schema: dict[str, object] | None = None,
+        output_schema: JsonObject | None = None,
     ) -> CodexRunResult:
         del output_schema
         if self.delay_seconds:
