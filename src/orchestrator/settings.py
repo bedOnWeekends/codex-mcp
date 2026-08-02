@@ -135,6 +135,14 @@ class Settings(BaseSettings):
             raise ValueError("Phase 6 supports only https://api.github.com")
         return normalized
 
+    @field_validator("github_api_version")
+    @classmethod
+    def validate_github_api_version(cls, value: str) -> str:
+        normalized = value.strip()
+        if normalized != "2026-03-10":
+            raise ValueError("Phase 6 requires GitHub REST API version 2026-03-10")
+        return normalized
+
     @model_validator(mode="after")
     def derive_runtime_paths(self) -> Settings:
         runtime = self.runtime_dir.resolve()
