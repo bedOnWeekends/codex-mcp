@@ -43,7 +43,7 @@ class Settings(BaseSettings):
     artifacts_dir: Path | None = None
     logs_dir: Path | None = None
     max_parallel_workers: int = Field(default=3, ge=1, le=16)
-    max_agents_per_run: int = Field(default=4, ge=1, le=4)
+    max_agents_per_run: int = Field(default=4, ge=2, le=4)
     max_tokens_per_run: int = Field(default=250_000, ge=10_000, le=5_000_000)
     max_dependency_summary_chars: int = Field(default=1_200, ge=256, le=4_000)
     scout_review_confidence_threshold: float = Field(default=0.72, ge=0, le=1)
