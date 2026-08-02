@@ -4,6 +4,7 @@ from decimal import Decimal
 from pathlib import PurePosixPath
 
 from .costing import projected_call_cost, projected_call_tokens
+from .ponytail import append_policy, implementation_policy, review_policy
 from .schemas import (
     AgentAssignment,
     AgentHandoff,
@@ -216,12 +217,14 @@ def build_agent_prompt(
             "checks when useful, and stop once the assignment is satisfied. Do not "
             "commit, merge, push, deploy, or access credentials."
         )
+        policy = implementation_policy()
     else:
         rules = (
             "Review only. Do not modify files. Report concrete correctness or safety "
             "defects; omit style-only commentary."
         )
-    return (
+        policy = review_policy()
+    prompt = (
         f"Role: {assignment.role.value}\n"
         f"Repository: {repository.name}\n"
         f"Goal: {run.goal}\n"
@@ -232,6 +235,7 @@ def build_agent_prompt(
         "Return only JSON matching the provided handoff schema. Keep the summary under "
         "800 characters and list only material risks and checks."
     )
+    return append_policy(prompt, policy)
 
 
 def validate_agent_changes(
