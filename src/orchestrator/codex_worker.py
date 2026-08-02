@@ -8,25 +8,30 @@ from pathlib import Path
 from uuid import UUID
 
 from .artifacts import ArtifactWriter
-from .codex_client import CodexClient, CodexRunner, FakeCodexClient
+from .codex_client import CodexClient, CodexRunResult, CodexRunner, FakeCodexClient
 from .context_builder import build_task_prompt
+from .costing import estimate_usage_cost, projected_call_cost
 from .errors import NoChangesToCommitError
 from .github_publisher import (
     Publisher,
     PublishTaskPayload,
     publisher_from_settings,
 )
-from .model_router import choose_model
+from .model_router import ModelProfile, choose_model_profile
 from .multi_agent import (
     agent_commit_message,
     build_agent_prompt,
     build_supervisor_prompt,
+    enforce_adaptive_policy,
     fake_agent_plan,
+    parse_agent_handoff,
     parse_agent_plan,
     validate_agent_changes,
 )
 from .phase7_store import Phase7Store
 from .schemas import (
+    AgentHandoff,
+    AgentPlan,
     AgentRole,
     ArtifactKind,
     Repository,
@@ -104,13 +109,19 @@ class CodexWorker:
         run: Run,
         repository: Repository,
     ) -> None:
+        profile = choose_model_profile(
+            settings=self.settings,
+            tier=task.model_tier,
+            risk=run.risk_level,
+            kind=task.kind,
+            attempt=task.attempt,
+        )
         if self.settings.codex_mode == "fake":
             plan = fake_agent_plan()
-            thread_id = None
-            input_tokens = 0
-            output_tokens = 0
+            result = CodexRunResult(thread_id="", text="")
         else:
-            client = self._client_for(task, run, read_only=True)
+            await self._ensure_model_budget(run, profile)
+            client = self._client_for(task, run, profile=profile, read_only=True)
             result = await client.run(
                 prompt=(
                     build_supervisor_prompt(
@@ -118,20 +129,24 @@ class CodexWorker:
                         run,
                         max_agents=self.settings.max_agents_per_run,
                     )
-                    + f"\n\nApproval context:\n{task.instruction}"
+                    + f"\nApproval context: {task.instruction}"
                 ),
                 cwd=repository.root_path,
                 thread_id=task.codex_thread_id,
+                output_schema=AgentPlan.model_json_schema(),
             )
             plan = parse_agent_plan(result.text)
-            thread_id = result.thread_id or None
-            input_tokens = result.input_tokens
-            output_tokens = result.output_tokens
+        plan = enforce_adaptive_policy(
+            plan,
+            run,
+            confidence_threshold=self.settings.scout_review_confidence_threshold,
+        )
         if len(plan.assignments) > self.settings.max_agents_per_run:
             raise ValueError(
                 "supervisor produced more assignments than max_agents_per_run"
             )
 
+        usage_cost = self._usage_cost(profile, result)
         plan_json = plan.model_dump_json(indent=2)
         await self._record_artifact(
             run_id=run.id,
@@ -145,13 +160,13 @@ class CodexWorker:
             task.id,
             plan=plan,
             summary=(
-                f"Created a validated DAG with {len(plan.assignments)} agent "
-                "assignments."
+                f"Selected {plan.mode.value} mode with {len(plan.assignments)} "
+                f"assignments at confidence {plan.confidence:.2f}."
             ),
-            codex_thread_id=thread_id,
-            input_tokens=input_tokens,
-            output_tokens=output_tokens,
-            estimated_cost_usd=Decimal("0"),
+            codex_thread_id=result.thread_id or None,
+            input_tokens=result.input_tokens,
+            output_tokens=result.output_tokens,
+            estimated_cost_usd=usage_cost,
             agents_root=self.settings.worktrees_dir / "agents" / str(run.id),
             max_attempts=self.settings.max_attempts_per_task,
         )
@@ -177,11 +192,22 @@ class CodexWorker:
         )
         await self.worktrees.apply_commits(workspace_info.path, dependency_commits)
         dependency_context = await self.store.dependency_context_for_assignment(
-            assignment.id
+            assignment.id,
+            max_summary_chars=self.settings.max_dependency_summary_chars,
         )
+        profile = choose_model_profile(
+            settings=self.settings,
+            tier=assignment.model_tier,
+            risk=run.risk_level,
+            kind=task.kind,
+            attempt=task.attempt,
+            role=assignment.role,
+        )
+        await self._ensure_model_budget(run, profile)
         client = self._client_for(
             task,
             run,
+            profile=profile,
             read_only=assignment.role is not AgentRole.IMPLEMENTER,
         )
         result = await client.run(
@@ -193,7 +219,9 @@ class CodexWorker:
             ),
             cwd=workspace_info.path,
             thread_id=assignment.codex_thread_id,
+            output_schema=AgentHandoff.model_json_schema(),
         )
+        handoff = parse_agent_handoff(result.text)
         changed_files = validate_agent_changes(
             assignment,
             await self.worktrees.changed_files(workspace_info.path),
@@ -228,13 +256,13 @@ class CodexWorker:
         assert self.settings.worktrees_dir is not None
         await self.store.complete_agent_task(
             task.id,
-            summary=result.text,
+            summary=handoff.model_dump_json(),
             changed_files=changed_files,
             commit_sha=commit_sha,
             codex_thread_id=result.thread_id or None,
             input_tokens=result.input_tokens,
             output_tokens=result.output_tokens,
-            estimated_cost_usd=Decimal("0"),
+            estimated_cost_usd=self._usage_cost(profile, result),
             integration_worktree_path=self.settings.worktrees_dir / str(run.id),
             max_attempts=self.settings.max_attempts_per_task,
         )
@@ -293,7 +321,15 @@ class CodexWorker:
         repository: Repository,
     ) -> None:
         workspace = await self._workspace_for(task, run, repository)
-        client = self._client_for(task, run)
+        profile = choose_model_profile(
+            settings=self.settings,
+            tier=task.model_tier,
+            risk=run.risk_level,
+            kind=task.kind,
+            attempt=task.attempt,
+        )
+        await self._ensure_model_budget(run, profile)
+        client = self._client_for(task, run, profile=profile)
         result = await client.run(
             prompt=build_task_prompt(
                 repository,
@@ -304,7 +340,7 @@ class CodexWorker:
             cwd=workspace,
             thread_id=task.codex_thread_id,
         )
-        estimated_cost = Decimal("0")
+        estimated_cost = self._usage_cost(profile, result)
         if task.kind is TaskKind.PLAN:
             await self.store.complete_plan_task(
                 task.id,
@@ -528,28 +564,61 @@ class CodexWorker:
         task: Task,
         run: Run,
         *,
+        profile: ModelProfile,
         read_only: bool = False,
     ) -> CodexRunner:
         if self.client_factory is not None:
             return self.client_factory(task, run)
         if self.settings.codex_mode == "fake":
             return FakeCodexClient(delay_seconds=self.settings.fake_codex_delay_seconds)
-        model = choose_model(
-            settings=self.settings,
-            tier=task.model_tier,
-            risk=run.risk_level,
-            kind=task.kind,
-        )
         sandbox_mode = (
             "read-only"
             if read_only or task.kind in {TaskKind.PLAN, TaskKind.SUPERVISE}
             else self.settings.codex_sandbox_mode
         )
         return CodexClient(
-            model=model,
+            model=profile.model,
+            effort=profile.effort,
             approval_policy=self.settings.codex_approval_policy,
             sandbox_mode=sandbox_mode,
         )
+
+    async def _ensure_model_budget(
+        self,
+        run: Run,
+        profile: ModelProfile,
+    ) -> None:
+        if self.settings.codex_mode != "live":
+            return
+        used_tokens = await self.store.total_tokens_for_run(run.id)
+        if used_tokens >= self.settings.max_tokens_per_run:
+            raise RuntimeError(
+                f"run token budget exhausted: {used_tokens} >= "
+                f"{self.settings.max_tokens_per_run}"
+            )
+        required = (
+            projected_call_cost(self.settings, profile.tier)
+            + self.settings.budget_reserve_usd
+        )
+        remaining = run.max_cost_usd - run.spent_cost_usd
+        if remaining < required:
+            raise RuntimeError(
+                f"insufficient run budget for {profile.model}: "
+                f"remaining {remaining}, required reserve {required}"
+            )
+
+    def _usage_cost(
+        self,
+        profile: ModelProfile,
+        result: CodexRunResult,
+    ) -> Decimal:
+        return estimate_usage_cost(
+            self.settings,
+            tier=profile.tier,
+            input_tokens=result.input_tokens,
+            cached_input_tokens=result.cached_input_tokens,
+            output_tokens=result.output_tokens,
+        ).amount_usd
 
     async def _record_artifact(
         self,
@@ -586,7 +655,7 @@ class CodexWorker:
 
     @staticmethod
     def _build_fix_instruction(verification_summary: str) -> str:
-        clipped = verification_summary[-20_000:]
+        clipped = verification_summary[-6_000:]
         return (
             "Fix only the failures reported by the latest verification run. Preserve "
             "the approved plan and integrated agent changes. Do not commit, merge, "
