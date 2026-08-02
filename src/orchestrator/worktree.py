@@ -22,8 +22,15 @@ class WorktreeInfo:
     branch: str
 
 
+@dataclass(frozen=True, slots=True)
+class DeliveryCommit:
+    sha: str
+    branch: str
+    changed_files: list[str]
+
+
 class GitWorktreeManager:
-    """Creates isolated run worktrees and inspects their uncommitted changes."""
+    """Creates isolated run worktrees and manages their local delivery commit."""
 
     def __init__(self, *, branch_prefix: str) -> None:
         self.branch_prefix = branch_prefix
@@ -110,6 +117,52 @@ class GitWorktreeManager:
             f"# - {item}" for item in untracked.splitlines()
         )
         return diff + suffix + "\n"
+
+    async def commit_verified_changes(
+        self,
+        path: Path,
+        *,
+        message: str,
+    ) -> DeliveryCommit:
+        await self._verify_existing_worktree(path)
+        changed_files = await self.changed_files(path)
+        if not changed_files:
+            raise InvalidRepositoryError(str(path), "worktree has no changes to commit")
+
+        await self._git(path, "diff", "--check")
+        branch = await self._git_text(path, "branch", "--show-current")
+        if not branch:
+            raise InvalidRepositoryError(
+                str(path), "delivery commit requires a named worktree branch"
+            )
+
+        await self._git(path, "add", "--all")
+        staged_files = await self._git_text(path, "diff", "--cached", "--name-only")
+        if not staged_files:
+            raise InvalidRepositoryError(str(path), "no staged changes remain to commit")
+
+        await self._git(
+            path,
+            "-c",
+            "user.name=Codex Orchestrator",
+            "-c",
+            "user.email=codex-orchestrator@localhost",
+            "commit",
+            "--no-gpg-sign",
+            "-m",
+            message,
+        )
+        sha = await self._git_text(path, "rev-parse", "HEAD")
+        status = await self._git_text(path, "status", "--porcelain=v1")
+        if status:
+            raise InvalidRepositoryError(
+                str(path), "worktree changed while creating the delivery commit"
+            )
+        return DeliveryCommit(
+            sha=sha,
+            branch=branch,
+            changed_files=changed_files,
+        )
 
     async def _verify_existing_worktree(self, path: Path) -> None:
         top_level = await self._git_text(path, "rev-parse", "--show-toplevel")
