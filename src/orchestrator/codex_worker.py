@@ -148,11 +148,9 @@ class CodexWorker:
             max_agents=self.settings.max_agents_per_run,
         )
         usage_cost = self._usage_cost(profile, result)
-        used_tokens = (
-            await self.store.total_tokens_for_run(run.id)
-            + result.input_tokens
-            + result.output_tokens
-        )
+        used_tokens = result.input_tokens + result.output_tokens
+        if self.settings.codex_mode == "live":
+            used_tokens += await self.store.total_tokens_for_run(run.id)
         plan = fit_plan_to_budget(
             plan,
             run,
