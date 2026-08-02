@@ -257,6 +257,11 @@ class GitWorktreeManager:
             raise InvalidRepositoryError(
                 str(path), "agent commit requires a named worktree branch"
             )
+        reusable = await self._is_agent_commit(
+            path,
+            run_id=run_id,
+            assignment_id=assignment_id,
+        )
         changed_files = await self.changed_files(path)
         if not changed_files:
             return await self._reuse_agent_commit(
@@ -265,28 +270,65 @@ class GitWorktreeManager:
                 run_id=run_id,
                 assignment_id=assignment_id,
             )
+
         await self._git(path, "diff", "--check")
         await self._git(path, "add", "--all")
         if not await self._git_text(path, "diff", "--cached", "--name-only"):
             raise NoChangesToCommitError(str(path), "agent has no staged changes")
-        await self._git(
-            path,
+        identity = [
             "-c",
             "user.name=Codex Orchestrator",
             "-c",
             "user.email=codex-orchestrator@localhost",
-            "commit",
-            "--no-gpg-sign",
-            "-m",
-            message,
-            "-m",
-            f"Orchestrator-Run: {run_id}\nOrchestrator-Agent: {assignment_id}",
-        )
+        ]
+        if reusable:
+            await self._git(
+                path,
+                *identity,
+                "commit",
+                "--amend",
+                "--no-edit",
+                "--no-gpg-sign",
+            )
+        else:
+            await self._git(
+                path,
+                *identity,
+                "commit",
+                "--no-gpg-sign",
+                "-m",
+                message,
+                "-m",
+                f"Orchestrator-Run: {run_id}\nOrchestrator-Agent: {assignment_id}",
+            )
         await self._ensure_clean(path)
+        sha = await self._git_text(path, "rev-parse", "HEAD")
+        cumulative = await self._git_text(
+            path,
+            "diff-tree",
+            "--no-commit-id",
+            "--name-only",
+            "-r",
+            "HEAD",
+        )
         return AgentCommit(
-            sha=await self._git_text(path, "rev-parse", "HEAD"),
+            sha=sha,
             branch=branch,
-            changed_files=changed_files,
+            changed_files=[item for item in cumulative.splitlines() if item],
+        )
+
+    async def _is_agent_commit(
+        self,
+        path: Path,
+        *,
+        run_id: UUID,
+        assignment_id: UUID,
+    ) -> bool:
+        body = await self._git_text(path, "log", "-1", "--format=%B")
+        lines = body.splitlines()
+        return (
+            f"Orchestrator-Run: {run_id}" in lines
+            and f"Orchestrator-Agent: {assignment_id}" in lines
         )
 
     async def _reuse_agent_commit(
@@ -297,11 +339,10 @@ class GitWorktreeManager:
         run_id: UUID,
         assignment_id: UUID,
     ) -> AgentCommit:
-        body = await self._git_text(path, "log", "-1", "--format=%B")
-        lines = body.splitlines()
-        if (
-            f"Orchestrator-Run: {run_id}" not in lines
-            or f"Orchestrator-Agent: {assignment_id}" not in lines
+        if not await self._is_agent_commit(
+            path,
+            run_id=run_id,
+            assignment_id=assignment_id,
         ):
             raise NoChangesToCommitError(str(path), "agent has no changes to commit")
         sha = await self._git_text(path, "rev-parse", "HEAD")
