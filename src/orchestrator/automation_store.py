@@ -4,7 +4,7 @@ from datetime import UTC, datetime
 from decimal import Decimal
 from uuid import UUID, uuid4
 
-from sqlalchemy import DateTime, ForeignKey, String, Text, select
+from sqlalchemy import DateTime, ForeignKey, Index, String, Text, select
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -18,6 +18,9 @@ from .schemas import ModelTier, RiskLevel, RunStatus, TaskKind, TaskStatus
 
 class AutomationRunModel(Base):
     __tablename__ = "automation_runs"
+    __table_args__ = (
+        Index("ix_automation_runs_status_created_at", "status", "created_at"),
+    )
 
     run_id: Mapped[UUID] = mapped_column(
         PGUUID(as_uuid=True),
@@ -30,7 +33,7 @@ class AutomationRunModel(Base):
     request_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     execution_mode: Mapped[str] = mapped_column(String(30), nullable=False)
     status: Mapped[str] = mapped_column(
-        String(30), nullable=False, default=AutomationStatus.ACTIVE.value, index=True
+        String(30), nullable=False, default=AutomationStatus.ACTIVE.value
     )
     commit_message: Mapped[str] = mapped_column(String(100), nullable=False)
     pull_request_title: Mapped[str] = mapped_column(String(256), nullable=False)
