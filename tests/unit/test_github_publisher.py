@@ -103,7 +103,9 @@ def test_parse_github_remote_rejects_unsafe_or_unsupported_forms(remote: str) ->
 
 
 @pytest.mark.asyncio
-async def test_fake_publisher_never_returns_a_remote_side_effect(tmp_path: Path) -> None:
+async def test_fake_publisher_never_returns_a_remote_side_effect(
+    tmp_path: Path,
+) -> None:
     result = await FakeGitHubPublisher().publish(
         repository=make_repository(tmp_path),
         run_id=uuid4(),
