@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from uuid import UUID
 
-from .errors import InvalidRepositoryError
+from .errors import InvalidRepositoryError, NoChangesToCommitError
 from .schemas import Repository
 
 
@@ -139,7 +139,9 @@ class GitWorktreeManager:
             candidate = path / relative_path
             if candidate.is_symlink():
                 digest.update(b"\0symlink\0")
-                digest.update(str(candidate.readlink()).encode("utf-8", errors="replace"))
+                digest.update(
+                    str(candidate.readlink()).encode("utf-8", errors="replace")
+                )
             elif candidate.is_file():
                 digest.update(b"\0file\0")
                 digest.update(candidate.read_bytes())
@@ -175,7 +177,9 @@ class GitWorktreeManager:
         await self._git(path, "add", "--all")
         staged_files = await self._git_text(path, "diff", "--cached", "--name-only")
         if not staged_files:
-            raise InvalidRepositoryError(str(path), "no staged changes remain to commit")
+            raise NoChangesToCommitError(
+                str(path), "no staged changes remain to commit"
+            )
 
         await self._git(
             path,
@@ -216,7 +220,7 @@ class GitWorktreeManager:
     ) -> DeliveryCommit:
         body = await self._git_text(path, "log", "-1", "--format=%B")
         if f"Orchestrator-Run: {run_id}" not in body.splitlines():
-            raise InvalidRepositoryError(str(path), "worktree has no changes to commit")
+            raise NoChangesToCommitError(str(path), "worktree has no changes to commit")
         sha = await self._git_text(path, "rev-parse", "HEAD")
         changed = await self._git_text(
             path,
