@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime
 from pathlib import Path
 from uuid import UUID, uuid4
@@ -151,6 +152,7 @@ async def test_live_publisher_pushes_run_branch_and_creates_draft_pr(
             json={
                 "html_url": "https://github.com/owner/repo/pull/7",
                 "number": 7,
+                "draft": True,
             },
         )
 
@@ -176,8 +178,48 @@ async def test_live_publisher_pushes_run_branch_and_creates_draft_pr(
         ("push", "--set-upstream", "origin", "orchestrator/run-test")
     ]
     assert [request.method for request in requests] == ["GET", "POST"]
+    posted = json.loads(requests[1].content)
+    assert posted["draft"] is True
     assert result.mode == "live"
     assert result.repository == "owner/repo"
     assert result.pull_request_url == "https://github.com/owner/repo/pull/7"
     assert result.pull_request_number == 7
     assert result.created is True
+
+
+@pytest.mark.asyncio
+async def test_live_publisher_reuses_only_a_draft_pr(tmp_path: Path) -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(
+            200,
+            json=[
+                {
+                    "html_url": "https://github.com/owner/repo/pull/8",
+                    "number": 8,
+                    "draft": True,
+                }
+            ],
+        )
+
+    run_id = uuid4()
+    publisher = StubLiveGitHubPublisher(
+        live_settings(tmp_path),
+        run_id=run_id,
+        transport=httpx.MockTransport(handler),
+    )
+    result = await publisher.publish(
+        repository=make_repository(tmp_path),
+        run_id=run_id,
+        worktree=tmp_path / "worktree",
+        payload=PublishTaskPayload(
+            title="feat: publish generated change",
+            expected_commit_sha="a" * 40,
+        ),
+    )
+
+    assert [request.method for request in requests] == ["GET"]
+    assert result.pull_request_number == 8
+    assert result.created is False
