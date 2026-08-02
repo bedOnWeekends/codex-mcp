@@ -4,7 +4,7 @@ import asyncio
 import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Protocol
+from typing import Literal, Protocol
 from urllib.parse import urlparse
 from uuid import UUID
 
@@ -32,7 +32,7 @@ _SSH_REMOTE = re.compile(
 class PublishTaskPayload(OrchestratorModel):
     title: str = Field(min_length=1, max_length=256)
     body: str = Field(default="", max_length=60_000)
-    draft: bool = True
+    draft: Literal[True] = True
     expected_commit_sha: str | None = Field(
         default=None,
         pattern=r"^[a-fA-F0-9]{40}$",
@@ -203,13 +203,14 @@ class LiveGitHubPublisher:
             )
             existing.raise_for_status()
             items = existing.json()
+            if not isinstance(items, list):
+                raise RuntimeError("GitHub returned an invalid pull request list")
             if items:
-                item = items[0]
                 return self._result(
                     remote=remote,
                     branch=branch,
                     commit_sha=commit_sha,
-                    item=item,
+                    item=items[0],
                     created=False,
                 )
 
@@ -220,7 +221,7 @@ class LiveGitHubPublisher:
                     "head": branch,
                     "base": repository.default_branch,
                     "body": payload.body,
-                    "draft": payload.draft,
+                    "draft": True,
                 },
             )
             response.raise_for_status()
@@ -232,8 +233,8 @@ class LiveGitHubPublisher:
                 created=True,
             )
 
-    @staticmethod
     def _result(
+        self,
         *,
         remote: GitHubRepositoryRef,
         branch: str,
@@ -245,8 +246,11 @@ class LiveGitHubPublisher:
             raise RuntimeError("GitHub returned an invalid pull request response")
         url = item.get("html_url")
         number = item.get("number")
+        draft = item.get("draft")
         if not isinstance(url, str) or not isinstance(number, int):
             raise RuntimeError("GitHub pull request response is missing URL or number")
+        if draft is not True:
+            raise RuntimeError("Phase 6 publication requires a draft pull request")
         return PublishResult(
             mode="live",
             repository=remote.full_name,
@@ -256,8 +260,9 @@ class LiveGitHubPublisher:
             pull_request_number=number,
             created=created,
             commands_run=[
-                f"git push --set-upstream origin {branch}",
-                "GitHub REST: list/create pull request",
+                "git push --set-upstream "
+                f"{self.settings.github_remote_name} {branch}",
+                "GitHub REST: list/create draft pull request",
             ],
         )
 
