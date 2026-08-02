@@ -10,6 +10,7 @@ import pytest
 
 from orchestrator.codex_client import CodexRunResult
 from orchestrator.codex_worker import CodexWorker
+from orchestrator.errors import NoChangesToCommitError
 from orchestrator.phase5_store import Phase5Store
 from orchestrator.schemas import (
     ModelTier,
@@ -95,12 +96,26 @@ def make_objects(
     return repository, run, task
 
 
-def settings(tmp_path: Path) -> Settings:
+def settings(tmp_path: Path, *, codex_mode: str = "fake") -> Settings:
     return Settings(
         environment="test",
         database_url="postgresql+asyncpg://u:p@localhost/test",
         runtime_dir=tmp_path / "runtime",
         max_parallel_workers=1,
+        codex_mode=codex_mode,
+    )
+
+
+def successful_verification() -> VerificationResult:
+    return VerificationResult(
+        commands=[
+            CommandResult(
+                name="git diff check",
+                command=["git", "diff", "--check"],
+                returncode=0,
+                output="",
+            )
+        ]
     )
 
 
@@ -167,16 +182,7 @@ async def test_review_task_runs_verification_and_completes_review(
         branch="orchestrator/run-test",
     )
     verifier = AsyncMock()
-    verifier.run.return_value = VerificationResult(
-        commands=[
-            CommandResult(
-                name="git diff check",
-                command=["git", "diff", "--check"],
-                returncode=0,
-                output="",
-            )
-        ]
-    )
+    verifier.run.return_value = successful_verification()
     worker = CodexWorker(
         store,
         settings(tmp_path),
@@ -213,16 +219,7 @@ async def test_delivery_reverifies_and_creates_local_commit(tmp_path: Path) -> N
         changed_files=["src/quote.py"],
     )
     verifier = AsyncMock()
-    verifier.run.return_value = VerificationResult(
-        commands=[
-            CommandResult(
-                name="git diff check",
-                command=["git", "diff", "--check"],
-                returncode=0,
-                output="",
-            )
-        ]
-    )
+    verifier.run.return_value = successful_verification()
     worker = CodexWorker(
         store,
         settings(tmp_path),
@@ -235,5 +232,52 @@ async def test_delivery_reverifies_and_creates_local_commit(tmp_path: Path) -> N
         message="feat: add quote lookup",
         run_id=run.id,
     )
-    store.complete_delivery_task.assert_awaited_once()
+    store.complete_delivery_task.assert_awaited_once_with(
+        task.id,
+        commit_sha="a" * 40,
+        changed_files=["src/quote.py"],
+        commands_run=["git diff --check"],
+    )
+    store.fail_or_retry_task.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_fake_delivery_completes_as_verified_noop(tmp_path: Path) -> None:
+    repository, run, task = make_objects(
+        tmp_path,
+        kind=TaskKind.DELIVER,
+        run_status=RunStatus.DELIVERING,
+    )
+    assert task.worktree_path is not None
+    task.worktree_path.mkdir(parents=True)
+    task = task.model_copy(update={"instruction": "test: verify fake delivery"})
+    store = AsyncMock(spec=Phase5Store)
+    store.claim_next_task.return_value = task
+    store.get_run.return_value = run
+    store.get_repository.return_value = repository
+    worktrees = AsyncMock()
+    worktrees.ensure.return_value = WorktreeInfo(
+        path=task.worktree_path,
+        branch="orchestrator/run-test",
+    )
+    worktrees.snapshot.side_effect = ["snapshot", "snapshot"]
+    worktrees.commit_verified_changes.side_effect = NoChangesToCommitError(
+        str(task.worktree_path),
+        "worktree has no changes to commit",
+    )
+    verifier = AsyncMock()
+    verifier.run.return_value = successful_verification()
+    worker = CodexWorker(
+        store,
+        settings(tmp_path, codex_mode="fake"),
+        worktrees=worktrees,
+        verifier=verifier,
+    )
+    assert await worker.process_one() is True
+    store.complete_delivery_task.assert_awaited_once_with(
+        task.id,
+        commit_sha=None,
+        changed_files=[],
+        commands_run=["git diff --check"],
+    )
     store.fail_or_retry_task.assert_not_awaited()
