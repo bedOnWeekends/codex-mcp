@@ -90,8 +90,8 @@ def build_supervisor_prompt(
         "approved implementation plan into a small dependency DAG. Return only one "
         "JSON object that validates against the supplied schema.\n\n"
         "Rules:\n"
-        f"- Use between 3 and {max_agents} assignments.\n"
-        "- Include at least one explorer, one implementer, and one reviewer.\n"
+        f"- Use between 4 and {max_agents} assignments.\n"
+        "- Include at least one explorer, two implementers, and one reviewer.\n"
         "- Explorers and reviewers are read-only and must have no owned_paths.\n"
         "- Implementers must have non-overlapping repository-relative owned_paths.\n"
         "- Every reviewer must depend on every implementer.\n"
@@ -176,7 +176,13 @@ def agent_commit_message(key: str) -> str:
 def _normalize_changed_path(value: str) -> str:
     candidate = value.strip().replace("\\", "/").removeprefix("./")
     path = PurePosixPath(candidate)
-    if not candidate or path.is_absolute() or ".." in path.parts or ".git" in path.parts:
+    if (
+        not candidate
+        or path.is_absolute()
+        or ".." in path.parts
+        or ".git" in path.parts
+        or any(token in candidate for token in ("\x00", ":", "*", "?", "[", "]"))
+    ):
         raise ValueError(f"unsafe changed file path: {value!r}")
     return path.as_posix()
 
