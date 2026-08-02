@@ -18,6 +18,8 @@ worktree branch. It never pushes, opens a pull request, merges, deploys, or trad
 - Verification runs again immediately before delivery.
 - If verification changes the worktree, delivery fails instead of committing it.
 - Delivery commits are idempotent and carry an `Orchestrator-Run` trailer.
+- Fake mode completes a verified no-change delivery as an explicit no-op instead of
+  adding a synthetic file to the target repository.
 - The orchestrator never pushes, opens a pull request, merges, deploys, or accesses
   live trading credentials.
 
@@ -37,13 +39,19 @@ approve_delivery
      -> create one local commit on orchestrator/run-<run-id>
   -> completed
 
+Fake mode with no generated file changes:
+  -> DELIVER
+  -> rerun verification
+  -> record a verified no-op delivery
+  -> completed
+
 Verification failure before delivery:
   -> retry DELIVER within the configured attempt limit
   -> failed when attempts are exhausted
 ```
 
-The delivery commit remains local. Inspect it manually and decide whether to push or
-open a pull request outside the orchestrator.
+A real delivery commit remains local. Inspect it manually and decide whether to push
+or open a pull request outside the orchestrator.
 
 ## Setup
 
@@ -124,8 +132,10 @@ Use the exact latest `version` returned by `get_run`. Supported commit types are
 `feat`, `fix`, `refactor`, `test`, `docs`, `chore`, and `ci`.
 
 With the default fake mode, planning and implementation use the deterministic fake
-client. Delivery itself is a local Git operation and does not call Codex.
-Set `ORCH_CODEX_MODE=live` only when intentionally performing a real Codex run.
+client. When that client produces no file changes, delivery still reruns verification
+and records a no-op result without creating a commit or modifying the target project.
+Delivery itself never calls Codex. Set `ORCH_CODEX_MODE=live` only when intentionally
+performing a real Codex run.
 
 ## Validate
 
