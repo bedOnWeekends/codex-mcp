@@ -13,6 +13,7 @@ _MILLION = Decimal("1000000")
 class UsageCost:
     input_tokens: int
     cached_input_tokens: int
+    cache_write_tokens: int
     output_tokens: int
     amount_usd: Decimal
 
@@ -27,21 +28,31 @@ def estimate_usage_cost(
     tier: ModelTier,
     input_tokens: int,
     cached_input_tokens: int,
+    cache_write_tokens: int,
     output_tokens: int,
 ) -> UsageCost:
-    if min(input_tokens, cached_input_tokens, output_tokens) < 0:
+    if min(
+        input_tokens,
+        cached_input_tokens,
+        cache_write_tokens,
+        output_tokens,
+    ) < 0:
         raise ValueError("token usage must be non-negative")
     cached = min(cached_input_tokens, input_tokens)
-    uncached = input_tokens - cached
+    cache_write = min(cache_write_tokens, input_tokens - cached)
+    uncached = input_tokens - cached - cache_write
     input_rate, cached_rate, output_rate = _rates(settings, tier)
+    cache_write_rate = input_rate * settings.codex_cache_write_multiplier
     amount = (
         Decimal(uncached) * input_rate
         + Decimal(cached) * cached_rate
+        + Decimal(cache_write) * cache_write_rate
         + Decimal(output_tokens) * output_rate
     ) / _MILLION
     return UsageCost(
         input_tokens=input_tokens,
         cached_input_tokens=cached,
+        cache_write_tokens=cache_write,
         output_tokens=output_tokens,
         amount_usd=amount.quantize(Decimal("0.000001")),
     )
