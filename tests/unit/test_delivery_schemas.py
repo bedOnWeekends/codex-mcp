@@ -25,6 +25,18 @@ def test_publish_title_accepts_project_convention() -> None:
     assert request.draft is True
 
 
+def test_publish_request_must_remain_draft() -> None:
+    with pytest.raises(ValidationError):
+        ApprovePublishInput.model_validate(
+            {
+                "run_id": uuid4(),
+                "expected_version": 5,
+                "title": "feat: publish delivered branch",
+                "draft": False,
+            }
+        )
+
+
 @pytest.mark.parametrize(
     "message",
     [
