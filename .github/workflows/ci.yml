@@ -1,0 +1,66 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [master]
+  push:
+    branches: [agent/chatgpt-auto-pr-api]
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_DB: orchestrator
+          POSTGRES_USER: orchestrator
+          POSTGRES_PASSWORD: orchestrator
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U orchestrator -d orchestrator"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+
+    env:
+      ORCH_ENVIRONMENT: test
+      ORCH_DATABASE_URL: postgresql+asyncpg://orchestrator:orchestrator@127.0.0.1:5432/orchestrator
+      ORCH_RUNTIME_DIR: ${{ github.workspace }}/.ci-runtime
+      ORCH_CODEX_MODE: fake
+      ORCH_GITHUB_PUBLISH_MODE: fake
+      ORCH_API_ENABLED: 'false'
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+
+      - name: Install package and development dependencies
+        run: python -m pip install -e ".[dev]"
+
+      - name: Apply database migrations
+        run: python -m alembic upgrade head
+
+      - name: Check formatting
+        run: python -m ruff format --check .
+
+      - name: Run Ruff
+        run: python -m ruff check .
+
+      - name: Run Pyright
+        run: python -m pyright
+
+      - name: Run tests
+        run: python -m pytest -q
