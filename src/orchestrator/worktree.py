@@ -31,8 +31,23 @@ class DeliveryCommit:
     reused: bool = False
 
 
+@dataclass(frozen=True, slots=True)
+class AgentCommit:
+    sha: str
+    branch: str
+    changed_files: list[str]
+    reused: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class IntegrationResult:
+    branch: str
+    applied_commits: list[str]
+    changed_files: list[str]
+
+
 class GitWorktreeManager:
-    """Creates isolated run worktrees and manages their local delivery commit."""
+    """Creates isolated run and agent worktrees and integrates verified commits."""
 
     def __init__(self, *, branch_prefix: str) -> None:
         self.branch_prefix = branch_prefix
@@ -44,12 +59,38 @@ class GitWorktreeManager:
         run_id: UUID,
         path: Path,
     ) -> WorktreeInfo:
+        return await self._ensure_named_worktree(
+            repository=repository,
+            path=path,
+            branch=f"{self.branch_prefix}{run_id.hex}",
+        )
+
+    async def ensure_agent(
+        self,
+        *,
+        repository: Repository,
+        run_id: UUID,
+        assignment_key: str,
+        path: Path,
+    ) -> WorktreeInfo:
+        return await self._ensure_named_worktree(
+            repository=repository,
+            path=path,
+            branch=f"{self.branch_prefix}{run_id.hex}/agent-{assignment_key}",
+        )
+
+    async def _ensure_named_worktree(
+        self,
+        *,
+        repository: Repository,
+        path: Path,
+        branch: str,
+    ) -> WorktreeInfo:
         root = repository.root_path.resolve()
         destination = path.expanduser().resolve()
         if not root.is_dir():
             raise InvalidRepositoryError(str(root), "repository directory is missing")
 
-        branch = f"{self.branch_prefix}{run_id.hex}"
         if destination.exists():
             await self._verify_existing_worktree(destination)
             current_branch = await self._git_text(
@@ -87,6 +128,47 @@ class GitWorktreeManager:
             )
         return WorktreeInfo(path=destination, branch=branch)
 
+    async def apply_commits(
+        self,
+        path: Path,
+        commits: list[str],
+    ) -> IntegrationResult:
+        await self._verify_existing_worktree(path)
+        await self._ensure_clean(path)
+        branch = await self._git_text(path, "branch", "--show-current")
+        if not branch:
+            raise InvalidRepositoryError(
+                str(path), "commit integration requires a named worktree branch"
+            )
+
+        applied: list[str] = []
+        for commit_sha in commits:
+            await self._git(path, "rev-parse", "--verify", f"{commit_sha}^{{commit}}")
+            if await self._git_succeeds(
+                path,
+                "merge-base",
+                "--is-ancestor",
+                commit_sha,
+                "HEAD",
+            ):
+                continue
+            try:
+                await self._git(path, "cherry-pick", commit_sha)
+            except GitCommandError as exc:
+                await self._git_best_effort(path, "cherry-pick", "--abort")
+                raise InvalidRepositoryError(
+                    str(path),
+                    f"agent commit integration conflict for {commit_sha}: {exc.stderr}",
+                ) from exc
+            applied.append(commit_sha)
+
+        await self._ensure_clean(path)
+        return IntegrationResult(
+            branch=branch,
+            applied_commits=applied,
+            changed_files=await self._changed_files_from_base(path),
+        )
+
     async def changed_files(self, path: Path) -> list[str]:
         output = await self._git_text(
             path,
@@ -103,6 +185,15 @@ class GitWorktreeManager:
                 candidate = candidate.rsplit(" -> ", 1)[1]
             files.append(candidate.strip('"'))
         return files
+
+    async def _changed_files_from_base(self, path: Path) -> list[str]:
+        output = await self._git_text(
+            path,
+            "diff",
+            "--name-only",
+            f"{await self._git_text(path, 'merge-base', 'HEAD', '@{-1}')}..HEAD",
+        ) if False else await self._git_text(path, "show", "--pretty=", "--name-only", "HEAD")
+        return sorted({item for item in output.splitlines() if item})
 
     async def diff(self, path: Path) -> str:
         diff = await self._git_text(
@@ -151,6 +242,83 @@ class GitWorktreeManager:
                 digest.update(b"\0missing\0")
         return digest.hexdigest()
 
+    async def commit_agent_changes(
+        self,
+        path: Path,
+        *,
+        message: str,
+        run_id: UUID,
+        assignment_id: UUID,
+    ) -> AgentCommit:
+        await self._verify_existing_worktree(path)
+        branch = await self._git_text(path, "branch", "--show-current")
+        if not branch:
+            raise InvalidRepositoryError(
+                str(path), "agent commit requires a named worktree branch"
+            )
+        changed_files = await self.changed_files(path)
+        if not changed_files:
+            return await self._reuse_agent_commit(
+                path,
+                branch=branch,
+                run_id=run_id,
+                assignment_id=assignment_id,
+            )
+        await self._git(path, "diff", "--check")
+        await self._git(path, "add", "--all")
+        if not await self._git_text(path, "diff", "--cached", "--name-only"):
+            raise NoChangesToCommitError(str(path), "agent has no staged changes")
+        await self._git(
+            path,
+            "-c",
+            "user.name=Codex Orchestrator",
+            "-c",
+            "user.email=codex-orchestrator@localhost",
+            "commit",
+            "--no-gpg-sign",
+            "-m",
+            message,
+            "-m",
+            f"Orchestrator-Run: {run_id}\nOrchestrator-Agent: {assignment_id}",
+        )
+        await self._ensure_clean(path)
+        return AgentCommit(
+            sha=await self._git_text(path, "rev-parse", "HEAD"),
+            branch=branch,
+            changed_files=changed_files,
+        )
+
+    async def _reuse_agent_commit(
+        self,
+        path: Path,
+        *,
+        branch: str,
+        run_id: UUID,
+        assignment_id: UUID,
+    ) -> AgentCommit:
+        body = await self._git_text(path, "log", "-1", "--format=%B")
+        lines = body.splitlines()
+        if (
+            f"Orchestrator-Run: {run_id}" not in lines
+            or f"Orchestrator-Agent: {assignment_id}" not in lines
+        ):
+            raise NoChangesToCommitError(str(path), "agent has no changes to commit")
+        sha = await self._git_text(path, "rev-parse", "HEAD")
+        changed = await self._git_text(
+            path,
+            "diff-tree",
+            "--no-commit-id",
+            "--name-only",
+            "-r",
+            "HEAD",
+        )
+        return AgentCommit(
+            sha=sha,
+            branch=branch,
+            changed_files=[item for item in changed.splitlines() if item],
+            reused=True,
+        )
+
     async def commit_verified_changes(
         self,
         path: Path,
@@ -195,16 +363,7 @@ class GitWorktreeManager:
             f"Orchestrator-Run: {run_id}",
         )
         sha = await self._git_text(path, "rev-parse", "HEAD")
-        status = await self._git_text(
-            path,
-            "status",
-            "--porcelain=v1",
-            "--untracked-files=all",
-        )
-        if status:
-            raise InvalidRepositoryError(
-                str(path), "worktree changed while creating the delivery commit"
-            )
+        await self._ensure_clean(path)
         return DeliveryCommit(
             sha=sha,
             branch=branch,
@@ -237,6 +396,16 @@ class GitWorktreeManager:
             reused=True,
         )
 
+    async def _ensure_clean(self, path: Path) -> None:
+        status = await self._git_text(
+            path,
+            "status",
+            "--porcelain=v1",
+            "--untracked-files=all",
+        )
+        if status:
+            raise InvalidRepositoryError(str(path), "worktree must be clean")
+
     async def _verify_existing_worktree(self, path: Path) -> None:
         top_level = await self._git_text(path, "rev-parse", "--show-toplevel")
         if Path(top_level).resolve() != path.resolve():
@@ -259,6 +428,17 @@ class GitWorktreeManager:
         )
         await process.communicate()
         return process.returncode == 0
+
+    async def _git_best_effort(self, cwd: Path, *args: str) -> None:
+        process = await asyncio.create_subprocess_exec(
+            "git",
+            "-C",
+            str(cwd),
+            *args,
+            stdout=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.DEVNULL,
+        )
+        await process.communicate()
 
     async def _git(self, cwd: Path, *args: str) -> tuple[str, str]:
         command = ["git", "-C", str(cwd), *args]
