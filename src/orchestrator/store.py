@@ -27,8 +27,10 @@ from .errors import (
 from .schemas import (
     Approval,
     ApprovalCreate,
+    ApprovalType,
     Artifact,
     ArtifactCreate,
+    ArtifactKind,
     Event,
     EventCreate,
     ModelTier,
@@ -44,6 +46,7 @@ from .schemas import (
     TaskResult,
     TaskResultCreate,
     TaskStatus,
+    VerificationCommandSpec,
 )
 from .state_machine import (
     ensure_run_transition,
@@ -63,7 +66,9 @@ class Store:
             name=data.name,
             root_path=str(data.root_path),
             default_branch=data.default_branch,
-            verification_config=data.verification_config,
+            verification_config=[
+                item.model_dump(mode="json") for item in data.verification_config
+            ],
         )
         try:
             async with self._session_factory.begin() as session:
@@ -493,7 +498,10 @@ class Store:
             name=model.name,
             root_path=Path(model.root_path),
             default_branch=model.default_branch,
-            verification_config=model.verification_config,
+            verification_config=[
+                VerificationCommandSpec.model_validate(item)
+                for item in model.verification_config
+            ],
             created_at=model.created_at,
             updated_at=model.updated_at,
         )
@@ -548,7 +556,7 @@ class Store:
         return Approval(
             id=model.id,
             run_id=model.run_id,
-            type=model.type,
+            type=ApprovalType(model.type),
             approved=model.approved,
             notes=model.notes,
             expected_version=model.expected_version,
@@ -561,7 +569,7 @@ class Store:
             id=model.id,
             run_id=model.run_id,
             task_id=model.task_id,
-            kind=model.kind,
+            kind=ArtifactKind(model.kind),
             path=Path(model.path),
             sha256=model.sha256,
             size_bytes=model.size_bytes,
