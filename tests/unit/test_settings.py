@@ -45,6 +45,9 @@ def test_fake_modes_and_adaptive_limits_are_safe_defaults(
         "ORCH_CODEX_MODEL_DEFAULT",
         "ORCH_CODEX_MODEL_CRITICAL",
         "ORCH_CODEX_CACHE_WRITE_MULTIPLIER",
+        "ORCH_PROJECTED_CALL_TOKENS_CHEAP",
+        "ORCH_PROJECTED_CALL_TOKENS_DEFAULT",
+        "ORCH_PROJECTED_CALL_TOKENS_CRITICAL",
     ):
         monkeypatch.delenv(name, raising=False)
 
@@ -66,9 +69,12 @@ def test_fake_modes_and_adaptive_limits_are_safe_defaults(
     assert settings.codex_effort_critical == "medium"
     assert settings.codex_price_default_input_per_mtok == Decimal("2.50")
     assert settings.codex_cache_write_multiplier == Decimal("1.25")
+    assert settings.projected_call_tokens_cheap == 12_000
+    assert settings.projected_call_tokens_default == 60_000
+    assert settings.projected_call_tokens_critical == 100_000
 
 
-@pytest.mark.parametrize("value", [0, 5])
+@pytest.mark.parametrize("value", [0, 1, 5])
 def test_agent_limit_is_bounded(tmp_path: Path, value: int) -> None:
     with pytest.raises(ValidationError):
         Settings.model_validate(
