@@ -165,7 +165,12 @@ class Settings(BaseSettings):
     @classmethod
     def normalize_model_name(cls, value: object, info: ValidationInfo) -> str:
         normalized = str(value or "").strip()
-        return normalized or _MODEL_DEFAULTS[info.field_name]
+        if normalized:
+            return normalized
+        field_name = info.field_name
+        if field_name is None or field_name not in _MODEL_DEFAULTS:
+            raise ValueError("could not resolve the Codex model setting name")
+        return _MODEL_DEFAULTS[field_name]
 
     @field_validator("database_url")
     @classmethod
