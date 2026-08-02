@@ -38,6 +38,10 @@ def test_valid_run_transition() -> None:
     ensure_run_transition(RunStatus.PUBLISHING, RunStatus.COMPLETED)
 
 
+def test_fix_task_can_return_from_execution_to_verification() -> None:
+    ensure_run_transition(RunStatus.EXECUTING, RunStatus.VERIFYING)
+
+
 def test_local_delivery_can_finish_without_publication() -> None:
     ensure_run_transition(
         RunStatus.AWAITING_PUBLISH_APPROVAL,
@@ -58,9 +62,9 @@ def test_agent_execution_cannot_skip_supervisor() -> None:
         )
 
 
-def test_verification_cannot_skip_integration() -> None:
+def test_integration_cannot_start_before_agent_execution() -> None:
     with pytest.raises(InvalidStateTransitionError):
-        ensure_run_transition(RunStatus.EXECUTING, RunStatus.VERIFYING)
+        ensure_run_transition(RunStatus.SUPERVISING, RunStatus.INTEGRATING)
 
 
 def test_delivery_cannot_skip_approval() -> None:
