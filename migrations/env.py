@@ -7,6 +7,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.engine import Connection
 from sqlalchemy.pool import NullPool
 
+from orchestrator.automation_store import AutomationRunModel as _AutomationRunModel
 from orchestrator.db_models import Base
 from orchestrator.settings import get_settings
 
