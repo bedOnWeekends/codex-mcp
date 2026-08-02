@@ -139,8 +139,8 @@ class FakeStore:
         assert run_id == self.run.id
         assert expected_version == self.run.version
         assert notes == "approved"
-        assert "dependency DAG" in instruction
-        assert model_tier is ModelTier.CRITICAL
+        assert "cheapest reliable" in instruction
+        assert model_tier is ModelTier.CHEAP
         assert max_attempts == 2
         self.supervisor_instruction = instruction
         return self._queued_outcome(
@@ -321,7 +321,7 @@ async def test_create_run_queues_a_planning_task(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_approve_plan_queues_supervisor_task(tmp_path: Path) -> None:
+async def test_approve_plan_queues_low_cost_supervisor_task(tmp_path: Path) -> None:
     fake = FakeStore()
     fake.run = fake.run.model_copy(
         update={"status": RunStatus.AWAITING_PLAN_APPROVAL, "plan": "Approved plan"}
@@ -335,6 +335,7 @@ async def test_approve_plan_queues_supervisor_task(tmp_path: Path) -> None:
     )
     assert output.status is RunStatus.SUPERVISING
     assert output.supervisor_task_status is TaskStatus.QUEUED
+    assert "low-cost scout" in output.message
     assert fake.supervisor_instruction is not None
 
 
