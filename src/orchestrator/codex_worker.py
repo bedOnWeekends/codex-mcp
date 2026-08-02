@@ -10,6 +10,7 @@ from uuid import UUID
 from .artifacts import ArtifactWriter
 from .codex_client import CodexClient, CodexRunner, FakeCodexClient
 from .context_builder import build_task_prompt
+from .errors import NoChangesToCommitError
 from .model_router import choose_model
 from .phase5_store import Phase5Store
 from .schemas import ArtifactKind, Repository, Run, Task, TaskKind
@@ -187,15 +188,42 @@ class CodexWorker:
         if snapshot_after != snapshot_before:
             raise RuntimeError("verification commands modified the delivery worktree")
 
-        commit = await self.worktrees.commit_verified_changes(
-            workspace_info.path,
-            message=task.instruction,
-            run_id=run.id,
-        )
+        try:
+            commit = await self.worktrees.commit_verified_changes(
+                workspace_info.path,
+                message=task.instruction,
+                run_id=run.id,
+            )
+        except NoChangesToCommitError:
+            if self.settings.codex_mode != "fake":
+                raise
+            receipt = (
+                "commit_sha=none\n"
+                f"branch={workspace_info.branch}\n"
+                "noop=true\n"
+                "pushed=false\n"
+                "merged=false\n"
+            )
+            await self._record_artifact(
+                run_id=run.id,
+                task_id=task.id,
+                kind=ArtifactKind.DELIVERY_RECEIPT,
+                filename="delivery-receipt.txt",
+                content=receipt,
+            )
+            await self.store.complete_delivery_task(
+                task.id,
+                commit_sha=None,
+                changed_files=[],
+                commands_run=verification.commands_run,
+            )
+            return
+
         receipt = (
             f"commit_sha={commit.sha}\n"
             f"branch={commit.branch}\n"
             f"reused={str(commit.reused).lower()}\n"
+            "noop=false\n"
             "pushed=false\n"
             "merged=false\n"
             "changed_files=\n"
