@@ -95,7 +95,9 @@ def test_conditional_reviewer_keeps_correctness_and_adds_complexity_check(
     )
     assert "concrete correctness or safety defects" in prompt
     assert "Ponytail complexity check:" in prompt
-    assert "correctness, safety, contract, and test review as the primary task" in prompt
+    assert (
+        "correctness, safety, contract, and test review as the primary task" in prompt
+    )
 
 
 def test_fix_gets_policy_but_plan_scout_does_not(tmp_path: Path) -> None:
