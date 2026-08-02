@@ -41,6 +41,14 @@ class Settings(BaseSettings):
     mcp_path: str = "/mcp"
     mcp_json_response: bool = True
     mcp_stateless_http: bool = True
+
+    api_enabled: bool = False
+    api_prefix: str = "/api/v1"
+    api_key: SecretStr | None = Field(default=None, repr=False)
+    api_docs_enabled: bool = True
+    api_poll_interval_seconds: float = Field(default=1.0, gt=0, le=60)
+    api_max_active_runs: int = Field(default=100, ge=1, le=1_000)
+
     database_url: str = Field(
         default="postgresql+asyncpg://orchestrator:orchestrator@127.0.0.1:5433/orchestrator",
         repr=False,
@@ -159,12 +167,12 @@ class Settings(BaseSettings):
             )
         return value
 
-    @field_validator("mcp_path")
+    @field_validator("mcp_path", "api_prefix")
     @classmethod
-    def validate_mcp_path(cls, value: str) -> str:
+    def validate_absolute_path(cls, value: str) -> str:
         normalized = value.strip()
         if not normalized.startswith("/"):
-            raise ValueError("mcp_path must start with '/'")
+            raise ValueError("server paths must start with '/'")
         if normalized != "/" and normalized.endswith("/"):
             normalized = normalized.rstrip("/")
         return normalized
@@ -211,12 +219,21 @@ class Settings(BaseSettings):
         return normalized
 
     @model_validator(mode="after")
-    def derive_runtime_paths(self) -> Settings:
+    def derive_runtime_paths_and_validate_api(self) -> Settings:
         runtime = self.runtime_dir.resolve()
         self.runtime_dir = runtime
         self.worktrees_dir = (self.worktrees_dir or runtime / "worktrees").resolve()
         self.artifacts_dir = (self.artifacts_dir or runtime / "artifacts").resolve()
         self.logs_dir = (self.logs_dir or runtime / "logs").resolve()
+        if self.api_enabled:
+            value = self.api_key.get_secret_value().strip() if self.api_key else ""
+            if len(value) < 32:
+                raise ValueError(
+                    "api_enabled requires ORCH_API_KEY with at least 32 characters"
+                )
+            self.api_key = SecretStr(value)
+            if self.api_prefix == self.mcp_path:
+                raise ValueError("api_prefix and mcp_path must be different")
         return self
 
     def ensure_runtime_directories(self) -> None:
