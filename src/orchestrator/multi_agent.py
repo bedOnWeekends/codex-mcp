@@ -24,7 +24,9 @@ def parse_agent_handoff(text: str) -> AgentHandoff:
         return AgentHandoff.model_validate_json(_extract_json_object(text))
     except ValueError:
         normalized = " ".join(text.strip().split())
-        return AgentHandoff(summary=(normalized or "Agent completed without a summary.")[:800])
+        return AgentHandoff(
+            summary=(normalized or "Agent completed without a summary.")[:800]
+        )
 
 
 def fake_agent_plan() -> AgentPlan:
@@ -59,22 +61,22 @@ def enforce_adaptive_policy(
     run: Run,
     *,
     confidence_threshold: float,
+    max_agents: int = 4,
 ) -> AgentPlan:
     implementers = [
         item for item in plan.assignments if item.role is AgentRole.IMPLEMENTER
     ]
-    reviewer_required = (
+    desired_reviewer = (
         run.risk_level in {RiskLevel.HIGH, RiskLevel.CRITICAL}
         or plan.confidence < confidence_threshold
         or (plan.mode is ExecutionMode.PARALLEL and len(implementers) >= 3)
     )
-    assignments = [
-        item for item in plan.assignments if item.role is AgentRole.IMPLEMENTER
-    ]
+    reviewer_required = desired_reviewer and len(implementers) < max_agents
+    assignments = list(implementers)
     if reviewer_required:
         assignments.append(
             AgentSpec(
-                key="review-change",
+                key=_reviewer_key({item.key for item in implementers}),
                 role=AgentRole.REVIEWER,
                 instruction=(
                     "Review the combined implementer results for correctness, contract "
@@ -85,11 +87,14 @@ def enforce_adaptive_policy(
             )
         )
     rationale = plan.rationale
-    if reviewer_required != plan.requires_llm_review:
-        rationale = (
-            f"{rationale} Deterministic policy set LLM review to "
+    if reviewer_required != plan.requires_llm_review or desired_reviewer != reviewer_required:
+        suffix = (
+            f" Deterministic policy set LLM review to "
             f"{str(reviewer_required).lower()}."
-        )[:600]
+        )
+        if desired_reviewer and not reviewer_required:
+            suffix += " The agent ceiling keeps the Sol implementer as the quality gate."
+        rationale = f"{rationale}{suffix}"[:600]
     return AgentPlan(
         mode=plan.mode,
         confidence=plan.confidence,
@@ -184,6 +189,15 @@ def validate_agent_changes(
 
 def agent_commit_message(key: str) -> str:
     return f"chore(agent): complete {key}"
+
+
+def _reviewer_key(existing: set[str]) -> str:
+    key = "review-change"
+    index = 2
+    while key in existing:
+        key = f"review-change-{index}"
+        index += 1
+    return key
 
 
 def _extract_json_object(text: str) -> str:
