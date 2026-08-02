@@ -23,6 +23,7 @@ from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 from .schemas import (
+    AgentAssignmentStatus,
     ModelTier,
     RiskLevel,
     RunStatus,
@@ -103,6 +104,9 @@ class RunModel(TimestampMixin, Base):
     tasks: Mapped[list[TaskModel]] = relationship(
         back_populates="run", cascade="all, delete-orphan"
     )
+    agent_assignments: Mapped[list[AgentAssignmentModel]] = relationship(
+        back_populates="run", cascade="all, delete-orphan"
+    )
     approvals: Mapped[list[ApprovalModel]] = relationship(
         back_populates="run", cascade="all, delete-orphan"
     )
@@ -163,8 +167,75 @@ class TaskModel(TimestampMixin, Base):
     result: Mapped[TaskResultModel | None] = relationship(
         back_populates="task", uselist=False, cascade="all, delete-orphan"
     )
+    agent_assignment: Mapped[AgentAssignmentModel | None] = relationship(
+        back_populates="task", uselist=False
+    )
     artifacts: Mapped[list[ArtifactModel]] = relationship(back_populates="task")
     events: Mapped[list[EventModel]] = relationship(back_populates="task")
+
+
+class AgentAssignmentModel(TimestampMixin, Base):
+    __tablename__ = "agent_assignments"
+    __table_args__ = (
+        UniqueConstraint("run_id", "key", name="uq_agent_assignments_run_key"),
+        UniqueConstraint("task_id", name="uq_agent_assignments_task_id"),
+        Index(
+            "ix_agent_assignments_run_status_created_at",
+            "run_id",
+            "status",
+            "created_at",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True), primary_key=True, default=uuid4
+    )
+    run_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("runs.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    task_id: Mapped[UUID | None] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("tasks.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    key: Mapped[str] = mapped_column(String(40), nullable=False)
+    role: Mapped[str] = mapped_column(String(30), nullable=False)
+    status: Mapped[str] = mapped_column(
+        String(30),
+        nullable=False,
+        default=AgentAssignmentStatus.BLOCKED.value,
+        index=True,
+    )
+    instruction: Mapped[str] = mapped_column(Text, nullable=False)
+    depends_on: Mapped[list[str]] = mapped_column(JSONB, nullable=False, default=list)
+    owned_paths: Mapped[list[str]] = mapped_column(JSONB, nullable=False, default=list)
+    model_tier: Mapped[str] = mapped_column(
+        String(20), nullable=False, default=ModelTier.DEFAULT.value
+    )
+    worktree_path: Mapped[str | None] = mapped_column(Text, nullable=True)
+    codex_thread_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    commit_sha: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    changed_files: Mapped[list[str]] = mapped_column(
+        JSONB, nullable=False, default=list
+    )
+    input_tokens: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    output_tokens: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    estimated_cost_usd: Mapped[Decimal] = mapped_column(
+        Numeric(12, 6), nullable=False, default=Decimal("0")
+    )
+    started_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    completed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
+    run: Mapped[RunModel] = relationship(back_populates="agent_assignments")
+    task: Mapped[TaskModel | None] = relationship(back_populates="agent_assignment")
 
 
 class TaskResultModel(Base):
