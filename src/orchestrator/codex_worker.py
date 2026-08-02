@@ -171,6 +171,7 @@ class CodexWorker:
             assignment_key=assignment.key,
             path=assignment.worktree_path,
         )
+        await self.worktrees.prepare_agent_attempt(workspace_info.path)
         dependency_commits = await self.store.dependency_commits_for_assignment(
             assignment.id
         )
@@ -216,7 +217,10 @@ class CodexWorker:
                     assignment_id=assignment.id,
                 )
                 commit_sha = commit.sha
-                changed_files = commit.changed_files
+                changed_files = validate_agent_changes(
+                    assignment,
+                    commit.changed_files,
+                )
             except NoChangesToCommitError:
                 if self.settings.codex_mode != "fake":
                     raise
