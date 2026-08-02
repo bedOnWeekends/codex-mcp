@@ -85,7 +85,7 @@ class RunControlService:
             expected_version=request.expected_version,
             notes=request.notes,
             instruction=self._build_supervision_instruction(request.notes),
-            model_tier=ModelTier.CRITICAL,
+            model_tier=ModelTier.CHEAP,
             max_attempts=self._settings.max_attempts_per_task,
         )
         return ApprovePlanOutput(
@@ -95,8 +95,8 @@ class RunControlService:
             supervisor_task_id=task.id,
             supervisor_task_status=task.status,
             message=(
-                "Plan approved. A supervisor task will create a validated agent DAG "
-                "before any implementation agent is allowed to modify files."
+                "Plan approved. A low-cost scout will choose the smallest reliable "
+                "single- or multi-agent execution shape before files are modified."
             ),
         )
 
@@ -289,10 +289,10 @@ class RunControlService:
 
     @staticmethod
     def _build_supervision_instruction(notes: str | None) -> str:
-        approval_notes = notes.strip() if notes else "No additional approval notes."
+        approval_notes = notes.strip() if notes else "none"
         return (
-            "Decompose the approved plan into a validated multi-agent dependency DAG. "
-            "Assign non-overlapping path ownership to implementers and require a "
-            "read-only reviewer after all implementers. Do not modify files.\n\n"
-            f"Approval notes:\n{approval_notes}"
+            "Use a short read-only scout trajectory to choose the cheapest reliable "
+            "execution mode. Prefer one implementer. Use parallel implementers only "
+            "for proven non-overlapping path groups. Reviewer use is conditional. "
+            f"Approval notes: {approval_notes}"
         )
