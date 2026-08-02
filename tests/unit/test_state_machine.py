@@ -12,9 +12,7 @@ from orchestrator.state_machine import (
 
 def test_valid_run_transition() -> None:
     ensure_run_transition(RunStatus.CREATED, RunStatus.PLANNING)
-    ensure_run_transition(
-        RunStatus.AWAITING_PLAN_APPROVAL, RunStatus.EXECUTING
-    )
+    ensure_run_transition(RunStatus.AWAITING_PLAN_APPROVAL, RunStatus.EXECUTING)
     ensure_run_transition(RunStatus.VERIFYING, RunStatus.COMPLETED)
 
 

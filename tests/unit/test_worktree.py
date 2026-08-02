@@ -13,12 +13,22 @@ from orchestrator.worktree import GitWorktreeManager
 
 
 def initialize_repository(path: Path) -> None:
-    subprocess.run(["git", "init", "-b", "main", str(path)], check=True, capture_output=True)
-    subprocess.run(["git", "-C", str(path), "config", "user.email", "test@example.com"], check=True)
-    subprocess.run(["git", "-C", str(path), "config", "user.name", "Test User"], check=True)
+    subprocess.run(
+        ["git", "init", "-b", "main", str(path)], check=True, capture_output=True
+    )
+    subprocess.run(
+        ["git", "-C", str(path), "config", "user.email", "test@example.com"], check=True
+    )
+    subprocess.run(
+        ["git", "-C", str(path), "config", "user.name", "Test User"], check=True
+    )
     (path / "README.md").write_text("hello\n", encoding="utf-8")
     subprocess.run(["git", "-C", str(path), "add", "README.md"], check=True)
-    subprocess.run(["git", "-C", str(path), "commit", "-m", "initial"], check=True, capture_output=True)
+    subprocess.run(
+        ["git", "-C", str(path), "commit", "-m", "initial"],
+        check=True,
+        capture_output=True,
+    )
 
 
 @pytest.mark.skipif(shutil.which("git") is None, reason="git is required")
@@ -46,7 +56,10 @@ async def test_worktree_is_isolated_and_reports_changes(tmp_path: Path) -> None:
 
     assert info.path == destination.resolve()
     assert info.branch == f"orchestrator/run-{run_id.hex}"
-    assert await manager.ensure(repository=repository, run_id=run_id, path=destination) == info
+    assert (
+        await manager.ensure(repository=repository, run_id=run_id, path=destination)
+        == info
+    )
     assert await manager.changed_files(info.path) == ["README.md", "new.py"]
     diff = await manager.diff(info.path)
     assert "README.md" in diff

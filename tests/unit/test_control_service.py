@@ -214,7 +214,9 @@ async def test_approve_plan_queues_implementation_in_runtime_worktree(
     )
     assert output.status is RunStatus.EXECUTING
     assert output.implementation_task_status is TaskStatus.QUEUED
-    assert fake.approved_worktree_path == tmp_path.resolve() / "worktrees" / str(fake.run.id)
+    assert fake.approved_worktree_path == tmp_path.resolve() / "worktrees" / str(
+        fake.run.id
+    )
 
 
 @pytest.mark.asyncio
@@ -228,7 +230,9 @@ async def test_get_run_returns_task_summaries(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_cancel_run_returns_new_version_and_canceled_tasks(tmp_path: Path) -> None:
+async def test_cancel_run_returns_new_version_and_canceled_tasks(
+    tmp_path: Path,
+) -> None:
     fake = FakeStore()
     output = await make_service(fake, runtime_dir=tmp_path).cancel_run(
         CancelRunInput(

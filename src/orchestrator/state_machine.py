@@ -5,7 +5,6 @@ from collections.abc import Mapping
 from .errors import InvalidStateTransitionError
 from .schemas import RunStatus, TaskStatus
 
-
 RUN_TRANSITIONS: Mapping[RunStatus, frozenset[RunStatus]] = {
     RunStatus.CREATED: frozenset({RunStatus.PLANNING, RunStatus.CANCELED}),
     RunStatus.PLANNING: frozenset(
@@ -65,9 +64,7 @@ TASK_TRANSITIONS: Mapping[TaskStatus, frozenset[TaskStatus]] = {
 TERMINAL_RUN_STATUSES = frozenset(
     {RunStatus.COMPLETED, RunStatus.FAILED, RunStatus.CANCELED}
 )
-TERMINAL_TASK_STATUSES = frozenset(
-    {TaskStatus.COMPLETED, TaskStatus.CANCELED}
-)
+TERMINAL_TASK_STATUSES = frozenset({TaskStatus.COMPLETED, TaskStatus.CANCELED})
 
 
 def ensure_run_transition(current: RunStatus, target: RunStatus) -> None:

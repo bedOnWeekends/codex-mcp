@@ -61,8 +61,7 @@ class Phase4Store(Store):
         normalized = data.model_copy(
             update={
                 "verification_config": [
-                    item.model_dump(mode="json")
-                    for item in data.verification_config
+                    item.model_dump(mode="json") for item in data.verification_config
                 ]
             }
         )
@@ -102,9 +101,7 @@ class Phase4Store(Store):
         async with self._session_factory.begin() as session:
             run_model = await self._locked_run(session, run_id)
             self._check_version(run_model, expected_version)
-            ensure_run_transition(
-                RunStatus(run_model.status), RunStatus.EXECUTING
-            )
+            ensure_run_transition(RunStatus(run_model.status), RunStatus.EXECUTING)
             approval = ApprovalModel(
                 run_id=run_id,
                 type=ApprovalType.PLAN.value,

@@ -128,7 +128,9 @@ def set_verification(
     config: Path = typer.Option(..., "--config", exists=True, dir_okay=False),
 ) -> None:
     """Replace trusted verification commands for a registered repository."""
-    asyncio.run(_set_verification(name=name, commands=_load_verification_config(config)))
+    asyncio.run(
+        _set_verification(name=name, commands=_load_verification_config(config))
+    )
 
 
 async def _list_repositories() -> None:
@@ -139,9 +141,10 @@ async def _list_repositories() -> None:
             typer.echo("No repositories registered.")
             return
         for repository in repositories:
-            command_names = ",".join(
-                item.name for item in repository.verification_config
-            ) or "git-diff-check"
+            command_names = (
+                ",".join(item.name for item in repository.verification_config)
+                or "git-diff-check"
+            )
             typer.echo(
                 f"{repository.name}\t{repository.default_branch}\t"
                 f"{repository.root_path}\t{command_names}"

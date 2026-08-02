@@ -49,7 +49,9 @@ def run_migrations_offline() -> None:
 
 
 def run_migrations_online() -> None:
-    engine = create_engine(get_sync_database_url(), poolclass=NullPool, pool_pre_ping=True)
+    engine = create_engine(
+        get_sync_database_url(), poolclass=NullPool, pool_pre_ping=True
+    )
     try:
         with engine.connect() as connection:
             configure(connection)

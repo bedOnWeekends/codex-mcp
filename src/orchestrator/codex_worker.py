@@ -176,9 +176,7 @@ class CodexWorker:
         if self.client_factory is not None:
             return self.client_factory(task, run)
         if self.settings.codex_mode == "fake":
-            return FakeCodexClient(
-                delay_seconds=self.settings.fake_codex_delay_seconds
-            )
+            return FakeCodexClient(delay_seconds=self.settings.fake_codex_delay_seconds)
         model = choose_model(
             settings=self.settings,
             tier=task.model_tier,

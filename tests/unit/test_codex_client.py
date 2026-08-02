@@ -55,7 +55,7 @@ async def test_live_adapter_uses_official_async_sdk_surface(
             return FakeResult()
 
     class FakeAsyncCodex:
-        async def __aenter__(self) -> "FakeAsyncCodex":
+        async def __aenter__(self) -> FakeAsyncCodex:
             calls.append(("enter", None))
             return self
 
@@ -110,7 +110,7 @@ async def test_live_adapter_resumes_existing_thread(
             return SimpleNamespace(final_response="continued", usage=None)
 
     class FakeAsyncCodex:
-        async def __aenter__(self) -> "FakeAsyncCodex":
+        async def __aenter__(self) -> FakeAsyncCodex:
             return self
 
         async def __aexit__(self, *_args: object) -> None:

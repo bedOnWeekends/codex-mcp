@@ -47,7 +47,9 @@ class VerificationResult:
                 status = "PASSED"
             else:
                 status = f"FAILED ({item.returncode})"
-            sections.append(f"## {item.name}: {status}\nCommand: `{item.display_command}`\n\n```text\n{item.output.rstrip()}\n```")
+            sections.append(
+                f"## {item.name}: {status}\nCommand: `{item.display_command}`\n\n```text\n{item.output.rstrip()}\n```"
+            )
         return "\n\n".join(sections) or "No verification commands were run."
 
 
@@ -57,8 +59,17 @@ class VerificationRunner:
     def __init__(self, *, default_timeout_seconds: int) -> None:
         self.default_timeout_seconds = default_timeout_seconds
 
-    async def run(self, *, cwd: Path, configured_commands: list[VerificationCommandSpec]) -> VerificationResult:
-        commands = [VerificationCommandSpec(name="git diff check", command=["git", "diff", "--check"], timeout_seconds=self.default_timeout_seconds), *configured_commands]
+    async def run(
+        self, *, cwd: Path, configured_commands: list[VerificationCommandSpec]
+    ) -> VerificationResult:
+        commands = [
+            VerificationCommandSpec(
+                name="git diff check",
+                command=["git", "diff", "--check"],
+                timeout_seconds=self.default_timeout_seconds,
+            ),
+            *configured_commands,
+        ]
         results: list[CommandResult] = []
         for spec in commands:
             result = await self._run_one(cwd=cwd, spec=spec)
@@ -67,14 +78,35 @@ class VerificationRunner:
                 break
         return VerificationResult(commands=results)
 
-    async def _run_one(self, *, cwd: Path, spec: VerificationCommandSpec) -> CommandResult:
+    async def _run_one(
+        self, *, cwd: Path, spec: VerificationCommandSpec
+    ) -> CommandResult:
         environment = os.environ.copy()
         environment.update(spec.env)
-        process = await asyncio.create_subprocess_exec(*spec.command, cwd=str(cwd), env=environment, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT)
+        process = await asyncio.create_subprocess_exec(
+            *spec.command,
+            cwd=str(cwd),
+            env=environment,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
+        )
         try:
-            stdout, _ = await asyncio.wait_for(process.communicate(), timeout=spec.timeout_seconds)
+            stdout, _ = await asyncio.wait_for(
+                process.communicate(), timeout=spec.timeout_seconds
+            )
         except TimeoutError:
             process.kill()
             stdout, _ = await process.communicate()
-            return CommandResult(name=spec.name, command=spec.command, returncode=None, output=stdout.decode(errors="replace"), timed_out=True)
-        return CommandResult(name=spec.name, command=spec.command, returncode=process.returncode, output=stdout.decode(errors="replace"))
+            return CommandResult(
+                name=spec.name,
+                command=spec.command,
+                returncode=None,
+                output=stdout.decode(errors="replace"),
+                timed_out=True,
+            )
+        return CommandResult(
+            name=spec.name,
+            command=spec.command,
+            returncode=process.returncode,
+            output=stdout.decode(errors="replace"),
+        )

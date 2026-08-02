@@ -7,8 +7,8 @@ Create Date: 2026-08-01
 
 from collections.abc import Sequence
 
-from alembic import op
 import sqlalchemy as sa
+from alembic import op
 from sqlalchemy.dialects import postgresql
 
 revision: str = "0001"
@@ -81,9 +81,7 @@ def upgrade() -> None:
     op.create_index("ix_runs_repository_id", "runs", ["repository_id"])
     op.create_index("ix_runs_status", "runs", ["status"])
     op.create_index("ix_runs_current_task_id", "runs", ["current_task_id"])
-    op.create_index(
-        "ix_runs_status_created_at", "runs", ["status", "created_at"]
-    )
+    op.create_index("ix_runs_status_created_at", "runs", ["status", "created_at"])
 
     op.create_table(
         "tasks",
@@ -214,9 +212,7 @@ def upgrade() -> None:
     )
     op.create_index("ix_events_run_id", "events", ["run_id"])
     op.create_index("ix_events_task_id", "events", ["task_id"])
-    op.create_index(
-        "ix_events_run_created_at", "events", ["run_id", "created_at"]
-    )
+    op.create_index("ix_events_run_created_at", "events", ["run_id", "created_at"])
 
 
 def downgrade() -> None:

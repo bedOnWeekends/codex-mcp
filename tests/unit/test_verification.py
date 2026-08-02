@@ -12,17 +12,29 @@ from orchestrator.verification import VerificationRunner
 
 
 def initialize_repository(path: Path) -> None:
-    subprocess.run(["git", "init", "-b", "main", str(path)], check=True, capture_output=True)
-    subprocess.run(["git", "-C", str(path), "config", "user.email", "test@example.com"], check=True)
-    subprocess.run(["git", "-C", str(path), "config", "user.name", "Test User"], check=True)
+    subprocess.run(
+        ["git", "init", "-b", "main", str(path)], check=True, capture_output=True
+    )
+    subprocess.run(
+        ["git", "-C", str(path), "config", "user.email", "test@example.com"], check=True
+    )
+    subprocess.run(
+        ["git", "-C", str(path), "config", "user.name", "Test User"], check=True
+    )
     (path / "README.md").write_text("hello\n", encoding="utf-8")
     subprocess.run(["git", "-C", str(path), "add", "README.md"], check=True)
-    subprocess.run(["git", "-C", str(path), "commit", "-m", "initial"], check=True, capture_output=True)
+    subprocess.run(
+        ["git", "-C", str(path), "commit", "-m", "initial"],
+        check=True,
+        capture_output=True,
+    )
 
 
 @pytest.mark.skipif(shutil.which("git") is None, reason="git is required")
 @pytest.mark.asyncio
-async def test_verification_runs_git_check_and_registered_commands(tmp_path: Path) -> None:
+async def test_verification_runs_git_check_and_registered_commands(
+    tmp_path: Path,
+) -> None:
     initialize_repository(tmp_path)
     result = await VerificationRunner(default_timeout_seconds=5).run(
         cwd=tmp_path,

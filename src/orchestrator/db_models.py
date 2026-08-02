@@ -18,16 +18,14 @@ from sqlalchemy import (
     UniqueConstraint,
     func,
 )
-from sqlalchemy.dialects.postgresql import JSONB, UUID as PGUUID
+from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 from .schemas import (
-    ApprovalType,
-    ArtifactKind,
     ModelTier,
     RiskLevel,
     RunStatus,
-    TaskKind,
     TaskStatus,
 )
 
@@ -70,9 +68,7 @@ class RepositoryModel(TimestampMixin, Base):
 
 class RunModel(TimestampMixin, Base):
     __tablename__ = "runs"
-    __table_args__ = (
-        Index("ix_runs_status_created_at", "status", "created_at"),
-    )
+    __table_args__ = (Index("ix_runs_status_created_at", "status", "created_at"),)
 
     id: Mapped[UUID] = mapped_column(
         PGUUID(as_uuid=True), primary_key=True, default=uuid4
@@ -254,9 +250,7 @@ class ArtifactModel(Base):
 
 class EventModel(Base):
     __tablename__ = "events"
-    __table_args__ = (
-        Index("ix_events_run_created_at", "run_id", "created_at"),
-    )
+    __table_args__ = (Index("ix_events_run_created_at", "run_id", "created_at"),)
 
     id: Mapped[UUID] = mapped_column(
         PGUUID(as_uuid=True), primary_key=True, default=uuid4

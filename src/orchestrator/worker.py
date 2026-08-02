@@ -28,7 +28,9 @@ async def worker_loop() -> None:
     settings.ensure_runtime_directories()
     database = create_database(settings)
     store = Phase4Store(database.session_factory)
-    workers = [CodexWorker(store, settings) for _ in range(settings.max_parallel_workers)]
+    workers = [
+        CodexWorker(store, settings) for _ in range(settings.max_parallel_workers)
+    ]
     try:
         async with asyncio.TaskGroup() as group:
             for index, worker in enumerate(workers, start=1):
