@@ -142,8 +142,18 @@ class GitWorktreeManager:
             )
 
         applied: list[str] = []
+        changed_files: set[str] = set()
         for commit_sha in commits:
             await self._git(path, "rev-parse", "--verify", f"{commit_sha}^{{commit}}")
+            names = await self._git_text(
+                path,
+                "diff-tree",
+                "--no-commit-id",
+                "--name-only",
+                "-r",
+                commit_sha,
+            )
+            changed_files.update(item for item in names.splitlines() if item)
             if await self._git_succeeds(
                 path,
                 "merge-base",
@@ -166,7 +176,7 @@ class GitWorktreeManager:
         return IntegrationResult(
             branch=branch,
             applied_commits=applied,
-            changed_files=await self._changed_files_from_base(path),
+            changed_files=sorted(changed_files),
         )
 
     async def changed_files(self, path: Path) -> list[str]:
@@ -185,15 +195,6 @@ class GitWorktreeManager:
                 candidate = candidate.rsplit(" -> ", 1)[1]
             files.append(candidate.strip('"'))
         return files
-
-    async def _changed_files_from_base(self, path: Path) -> list[str]:
-        output = await self._git_text(
-            path,
-            "diff",
-            "--name-only",
-            f"{await self._git_text(path, 'merge-base', 'HEAD', '@{-1}')}..HEAD",
-        ) if False else await self._git_text(path, "show", "--pretty=", "--name-only", "HEAD")
-        return sorted({item for item in output.splitlines() if item})
 
     async def diff(self, path: Path) -> str:
         diff = await self._git_text(
