@@ -18,6 +18,7 @@ from orchestrator.schemas import (
     AgentAssignment,
     AgentAssignmentStatus,
     AgentRole,
+    ExecutionMode,
     ModelTier,
     Repository,
     RiskLevel,
@@ -29,11 +30,7 @@ from orchestrator.schemas import (
 )
 from orchestrator.settings import Settings
 from orchestrator.verification import CommandResult, VerificationResult
-from orchestrator.worktree import (
-    DeliveryCommit,
-    IntegrationResult,
-    WorktreeInfo,
-)
+from orchestrator.worktree import DeliveryCommit, IntegrationResult, WorktreeInfo
 
 
 class StaticClient:
@@ -46,8 +43,9 @@ class StaticClient:
         prompt: str,
         cwd: Path,
         thread_id: str | None = None,
+        output_schema: dict[str, object] | None = None,
     ) -> CodexRunResult:
-        del prompt, cwd, thread_id
+        del prompt, cwd, thread_id, output_schema
         if isinstance(self.result, Exception):
             raise self.result
         return self.result
@@ -136,7 +134,11 @@ def make_assignment(task: Task, *, role: AgentRole) -> AgentAssignment:
         instruction="Complete the assigned scope.",
         depends_on=[],
         owned_paths=["src"] if role is AgentRole.IMPLEMENTER else [],
-        model_tier=ModelTier.DEFAULT,
+        model_tier=(
+            ModelTier.DEFAULT
+            if role is AgentRole.IMPLEMENTER
+            else ModelTier.CRITICAL
+        ),
         worktree_path=task.worktree_path,
         changed_files=[],
         input_tokens=0,
@@ -198,7 +200,7 @@ async def test_plan_task_is_completed_without_real_codex_usage(tmp_path: Path) -
 
 
 @pytest.mark.asyncio
-async def test_fake_supervisor_creates_parallel_validated_agent_dag(
+async def test_fake_supervisor_chooses_single_agent_cheapest_path(
     tmp_path: Path,
 ) -> None:
     repository, run, task = make_objects(
@@ -216,12 +218,8 @@ async def test_fake_supervisor_creates_parallel_validated_agent_dag(
     call = store.complete_supervision_task.await_args
     assert call is not None
     plan = call.kwargs["plan"]
-    assert [item.role for item in plan.assignments] == [
-        AgentRole.EXPLORER,
-        AgentRole.IMPLEMENTER,
-        AgentRole.IMPLEMENTER,
-        AgentRole.REVIEWER,
-    ]
+    assert plan.mode is ExecutionMode.SINGLE
+    assert [item.role for item in plan.assignments] == [AgentRole.IMPLEMENTER]
     assert call.kwargs["agents_root"] == (
         tmp_path / "runtime" / "worktrees" / "agents" / str(run.id)
     ).resolve()
@@ -229,7 +227,7 @@ async def test_fake_supervisor_creates_parallel_validated_agent_dag(
 
 
 @pytest.mark.asyncio
-async def test_implementer_agent_uses_isolated_worktree_and_completes_fake_noop(
+async def test_implementer_agent_uses_isolated_worktree_and_compact_handoff(
     tmp_path: Path,
 ) -> None:
     repository, run, task = make_objects(
@@ -274,15 +272,19 @@ async def test_implementer_agent_uses_isolated_worktree_and_completes_fake_noop(
         assignment_key=assignment.key,
         path=worktree_path,
     )
+    store.dependency_context_for_assignment.assert_awaited_once_with(
+        assignment.id,
+        max_summary_chars=1_200,
+    )
     store.complete_agent_task.assert_awaited_once_with(
         task.id,
-        summary="No changes required.",
+        summary='{"summary":"No changes required.","risks":[],"tests":[]}',
         changed_files=[],
         commit_sha=None,
         codex_thread_id="agent-thread",
         input_tokens=0,
         output_tokens=0,
-        estimated_cost_usd=Decimal("0"),
+        estimated_cost_usd=Decimal("0.000000"),
         integration_worktree_path=(
             tmp_path / "runtime" / "worktrees" / str(run.id)
         ).resolve(),
@@ -341,6 +343,32 @@ async def test_worker_retries_failure_without_terminating_loop(tmp_path: Path) -
         client_factory=lambda _task, _run: StaticClient(RuntimeError("boom")),
     )
     assert await worker.process_one() is True
+    store.fail_or_retry_task.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_live_worker_stops_before_call_when_token_budget_is_exhausted(
+    tmp_path: Path,
+) -> None:
+    repository, run, task = make_objects(
+        tmp_path,
+        kind=TaskKind.PLAN,
+        run_status=RunStatus.PLANNING,
+    )
+    store = AsyncMock(spec=Phase7Store)
+    store.claim_next_task.return_value = task
+    store.get_run.return_value = run
+    store.get_repository.return_value = repository
+    store.total_tokens_for_run.return_value = 250_000
+    client = AsyncMock()
+    worker = CodexWorker(
+        store,
+        settings(tmp_path, codex_mode="live"),
+        client_factory=lambda _task, _run: client,
+    )
+
+    assert await worker.process_one() is True
+    client.run.assert_not_awaited()
     store.fail_or_retry_task.assert_awaited_once()
 
 
