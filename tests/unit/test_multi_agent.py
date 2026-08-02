@@ -21,13 +21,16 @@ from orchestrator.schemas import (
 )
 
 
-def test_fake_agent_plan_has_topological_explorer_implementer_reviewer_order() -> None:
+def test_fake_agent_plan_fans_out_parallel_implementers() -> None:
     plan = fake_agent_plan()
     assert [item.key for item in plan.topological_order()] == [
         "explore-codebase",
-        "implement-core",
+        "implement-source",
+        "implement-tests",
         "review-integration",
     ]
+    reviewer = plan.assignments[-1]
+    assert set(reviewer.depends_on) == {"implement-source", "implement-tests"}
 
 
 def test_agent_plan_rejects_cycles() -> None:
