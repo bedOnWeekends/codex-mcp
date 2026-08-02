@@ -1,7 +1,11 @@
 from decimal import Decimal
 from pathlib import Path
 
-from orchestrator.costing import estimate_usage_cost, projected_call_cost
+from orchestrator.costing import (
+    estimate_usage_cost,
+    projected_call_cost,
+    projected_call_tokens,
+)
 from orchestrator.schemas import ModelTier
 from orchestrator.settings import Settings
 
@@ -55,3 +59,10 @@ def test_projected_call_cost_increases_by_tier(tmp_path: Path) -> None:
         settings,
         ModelTier.CRITICAL,
     )
+
+
+def test_projected_call_tokens_increase_by_tier(tmp_path: Path) -> None:
+    settings = make_settings(tmp_path)
+    assert projected_call_tokens(settings, ModelTier.CHEAP) == 12_000
+    assert projected_call_tokens(settings, ModelTier.DEFAULT) == 60_000
+    assert projected_call_tokens(settings, ModelTier.CRITICAL) == 100_000
