@@ -88,7 +88,12 @@ class GitWorktreeManager:
         return WorktreeInfo(path=destination, branch=branch)
 
     async def changed_files(self, path: Path) -> list[str]:
-        output = await self._git_text(path, "status", "--porcelain=v1")
+        output = await self._git_text(
+            path,
+            "status",
+            "--porcelain=v1",
+            "--untracked-files=all",
+        )
         files: list[str] = []
         for line in output.splitlines():
             if len(line) < 4:
@@ -121,7 +126,12 @@ class GitWorktreeManager:
         return diff + suffix + "\n"
 
     async def snapshot(self, path: Path) -> str:
-        status = await self._git_text(path, "status", "--porcelain=v1")
+        status = await self._git_text(
+            path,
+            "status",
+            "--porcelain=v1",
+            "--untracked-files=all",
+        )
         digest = hashlib.sha256(status.encode("utf-8", errors="replace"))
         for relative_path in sorted(await self.changed_files(path)):
             digest.update(b"\0path\0")
@@ -181,7 +191,12 @@ class GitWorktreeManager:
             f"Orchestrator-Run: {run_id}",
         )
         sha = await self._git_text(path, "rev-parse", "HEAD")
-        status = await self._git_text(path, "status", "--porcelain=v1")
+        status = await self._git_text(
+            path,
+            "status",
+            "--porcelain=v1",
+            "--untracked-files=all",
+        )
         if status:
             raise InvalidRepositoryError(
                 str(path), "worktree changed while creating the delivery commit"
