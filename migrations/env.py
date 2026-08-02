@@ -7,15 +7,14 @@ from sqlalchemy import create_engine
 from sqlalchemy.engine import Connection
 from sqlalchemy.pool import NullPool
 
-from orchestrator.automation_store import AutomationRunModel as _AutomationRunModel
-from orchestrator.db_models import Base
+from orchestrator.automation_store import AutomationRunModel
 from orchestrator.settings import get_settings
 
 config = context.config
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
-target_metadata = Base.metadata
+target_metadata = AutomationRunModel.metadata
 
 
 def get_sync_database_url() -> str:
