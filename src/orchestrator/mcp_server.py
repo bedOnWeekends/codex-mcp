@@ -18,16 +18,16 @@ from .settings import Settings
 
 SERVER_INSTRUCTIONS = """
 Use list_repositories before create_run. create_run queues a read-only planning task.
-Use get_run to read the authoritative run version, task state, and agent assignments.
-Only call approve_plan after awaiting_plan_approval. Approval queues a read-only
-supervisor that creates a validated dependency DAG with explorer, implementer, and
-reviewer agents. Ready agents execute in independent Git worktrees and Codex threads.
-Implementers have non-overlapping path ownership. The integrator cherry-picks completed
-agent commits into the run worktree; conflicts and ownership violations fail safely.
-The existing verification, delivery, and publication approval boundaries remain in
-place. The orchestrator never force-pushes, merges, deploys, or trades. cancel_run and
-all approvals require the latest run version. Phase 7 workers execute queued work
-outside the MCP server process.
+Use get_run for the authoritative version, cost, task state, and agent assignments.
+Only call approve_plan after awaiting_plan_approval. Approval queues a bounded low-cost
+scout that defaults to one Terra implementer and selects two or three parallel
+implementers only for proven non-overlapping scopes. Sol review is conditional on risk,
+low confidence, or retry. Agents use isolated worktrees and compact structured
+handoffs. Model calls are blocked by run token and cost budgets. Integration and
+registered verification are deterministic. Delivery and publication remain separately
+approved. The orchestrator never force-pushes, merges, deploys, or trades. All approvals
+and cancel_run require the latest run version. Workers execute queued work outside the
+MCP server process.
 """.strip()
 
 
