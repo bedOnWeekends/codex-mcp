@@ -4,11 +4,12 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "codex-mcp"
-version = "0.7.0"
+version = "0.8.0"
 requires-python = ">=3.12"
 dependencies = [
   "alembic>=1.13",
   "asyncpg>=0.29",
+  "fastapi>=0.115,<1",
   "httpx>=0.27,<1",
   "mcp>=1.29",
   "openai-codex>=0.144.4",
