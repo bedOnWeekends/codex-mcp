@@ -152,7 +152,7 @@ class CodexWorker:
             input_tokens=input_tokens,
             output_tokens=output_tokens,
             estimated_cost_usd=Decimal("0"),
-            agents_root=self.settings.worktrees_dir / str(run.id) / "agents",
+            agents_root=self.settings.worktrees_dir / "agents" / str(run.id),
             max_attempts=self.settings.max_attempts_per_task,
         )
 
