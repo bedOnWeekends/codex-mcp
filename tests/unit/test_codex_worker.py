@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import Path
+from typing import Literal
 from unittest.mock import AsyncMock
 from uuid import uuid4
 
@@ -96,7 +97,11 @@ def make_objects(
     return repository, run, task
 
 
-def settings(tmp_path: Path, *, codex_mode: str = "fake") -> Settings:
+def settings(
+    tmp_path: Path,
+    *,
+    codex_mode: Literal["fake", "live"] = "fake",
+) -> Settings:
     return Settings(
         environment="test",
         database_url="postgresql+asyncpg://u:p@localhost/test",
