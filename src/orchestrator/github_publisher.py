@@ -9,7 +9,7 @@ from urllib.parse import urlparse
 from uuid import UUID
 
 import httpx
-from pydantic import Field
+from pydantic import Field, SecretStr
 
 from .errors import InvalidRepositoryError
 from .schemas import OrchestratorModel, Repository
@@ -113,9 +113,11 @@ class LiveGitHubPublisher:
         *,
         transport: httpx.AsyncBaseTransport | None = None,
     ) -> None:
-        if settings.github_token is None:
+        token = settings.github_token
+        if token is None:
             raise ValueError("ORCH_GITHUB_TOKEN is required in live publish mode")
         self.settings = settings
+        self._token: SecretStr = token
         self.transport = transport
 
     async def publish(
@@ -179,10 +181,9 @@ class LiveGitHubPublisher:
             branch,
         )
 
-        token = self.settings.github_token.get_secret_value()
         headers = {
             "Accept": "application/vnd.github+json",
-            "Authorization": f"Bearer {token}",
+            "Authorization": f"Bearer {self._token.get_secret_value()}",
             "X-GitHub-Api-Version": self.settings.github_api_version,
             "User-Agent": self.settings.app_name,
         }
