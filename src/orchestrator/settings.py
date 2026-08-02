@@ -93,6 +93,9 @@ class Settings(BaseSettings):
     codex_price_critical_output_per_mtok: Decimal = Field(
         default=Decimal("30.00"), ge=0
     )
+    codex_cache_write_multiplier: Decimal = Field(
+        default=Decimal("1.25"), ge=1
+    )
     projected_call_cost_usd_cheap: Decimal = Field(
         default=Decimal("0.05"), ge=0
     )
