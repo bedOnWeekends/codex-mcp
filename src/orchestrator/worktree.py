@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 from dataclasses import dataclass
 from pathlib import Path
 from uuid import UUID
 
-from .errors import InvalidRepositoryError
+from .errors import InvalidRepositoryError, NoChangesToCommitError
 from .schemas import Repository
 
 
@@ -22,8 +23,16 @@ class WorktreeInfo:
     branch: str
 
 
+@dataclass(frozen=True, slots=True)
+class DeliveryCommit:
+    sha: str
+    branch: str
+    changed_files: list[str]
+    reused: bool = False
+
+
 class GitWorktreeManager:
-    """Creates isolated run worktrees and inspects their uncommitted changes."""
+    """Creates isolated run worktrees and manages their local delivery commit."""
 
     def __init__(self, *, branch_prefix: str) -> None:
         self.branch_prefix = branch_prefix
@@ -79,7 +88,12 @@ class GitWorktreeManager:
         return WorktreeInfo(path=destination, branch=branch)
 
     async def changed_files(self, path: Path) -> list[str]:
-        output = await self._git_text(path, "status", "--porcelain=v1")
+        output = await self._git_text(
+            path,
+            "status",
+            "--porcelain=v1",
+            "--untracked-files=all",
+        )
         files: list[str] = []
         for line in output.splitlines():
             if len(line) < 4:
@@ -110,6 +124,118 @@ class GitWorktreeManager:
             f"# - {item}" for item in untracked.splitlines()
         )
         return diff + suffix + "\n"
+
+    async def snapshot(self, path: Path) -> str:
+        status = await self._git_text(
+            path,
+            "status",
+            "--porcelain=v1",
+            "--untracked-files=all",
+        )
+        digest = hashlib.sha256(status.encode("utf-8", errors="replace"))
+        for relative_path in sorted(await self.changed_files(path)):
+            digest.update(b"\0path\0")
+            digest.update(relative_path.encode("utf-8", errors="replace"))
+            candidate = path / relative_path
+            if candidate.is_symlink():
+                digest.update(b"\0symlink\0")
+                digest.update(
+                    str(candidate.readlink()).encode("utf-8", errors="replace")
+                )
+            elif candidate.is_file():
+                digest.update(b"\0file\0")
+                digest.update(candidate.read_bytes())
+            elif candidate.exists():
+                digest.update(b"\0other\0")
+            else:
+                digest.update(b"\0missing\0")
+        return digest.hexdigest()
+
+    async def commit_verified_changes(
+        self,
+        path: Path,
+        *,
+        message: str,
+        run_id: UUID,
+    ) -> DeliveryCommit:
+        await self._verify_existing_worktree(path)
+        branch = await self._git_text(path, "branch", "--show-current")
+        if not branch:
+            raise InvalidRepositoryError(
+                str(path), "delivery commit requires a named worktree branch"
+            )
+
+        changed_files = await self.changed_files(path)
+        if not changed_files:
+            return await self._reuse_delivery_commit(
+                path,
+                branch=branch,
+                run_id=run_id,
+            )
+
+        await self._git(path, "diff", "--check")
+        await self._git(path, "add", "--all")
+        staged_files = await self._git_text(path, "diff", "--cached", "--name-only")
+        if not staged_files:
+            raise NoChangesToCommitError(
+                str(path), "no staged changes remain to commit"
+            )
+
+        await self._git(
+            path,
+            "-c",
+            "user.name=Codex Orchestrator",
+            "-c",
+            "user.email=codex-orchestrator@localhost",
+            "commit",
+            "--no-gpg-sign",
+            "-m",
+            message,
+            "-m",
+            f"Orchestrator-Run: {run_id}",
+        )
+        sha = await self._git_text(path, "rev-parse", "HEAD")
+        status = await self._git_text(
+            path,
+            "status",
+            "--porcelain=v1",
+            "--untracked-files=all",
+        )
+        if status:
+            raise InvalidRepositoryError(
+                str(path), "worktree changed while creating the delivery commit"
+            )
+        return DeliveryCommit(
+            sha=sha,
+            branch=branch,
+            changed_files=changed_files,
+        )
+
+    async def _reuse_delivery_commit(
+        self,
+        path: Path,
+        *,
+        branch: str,
+        run_id: UUID,
+    ) -> DeliveryCommit:
+        body = await self._git_text(path, "log", "-1", "--format=%B")
+        if f"Orchestrator-Run: {run_id}" not in body.splitlines():
+            raise NoChangesToCommitError(str(path), "worktree has no changes to commit")
+        sha = await self._git_text(path, "rev-parse", "HEAD")
+        changed = await self._git_text(
+            path,
+            "diff-tree",
+            "--no-commit-id",
+            "--name-only",
+            "-r",
+            "HEAD",
+        )
+        return DeliveryCommit(
+            sha=sha,
+            branch=branch,
+            changed_files=[item for item in changed.splitlines() if item],
+            reused=True,
+        )
 
     async def _verify_existing_worktree(self, path: Path) -> None:
         top_level = await self._git_text(path, "rev-parse", "--show-toplevel")

@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+import re
 from datetime import datetime
 from decimal import Decimal
 from uuid import UUID
 
-from pydantic import Field
+from pydantic import Field, field_validator
 
 from .schemas import (
     ModelTier,
@@ -13,6 +14,11 @@ from .schemas import (
     RunStatus,
     TaskKind,
     TaskStatus,
+)
+
+CONVENTIONAL_COMMIT_PATTERN = re.compile(
+    r"^(feat|fix|refactor|test|docs|chore|ci)"
+    r"(?:\([a-z0-9][a-z0-9._/-]*\))?!?: [^\r\n]{1,72}$"
 )
 
 
@@ -57,6 +63,33 @@ class ApprovePlanOutput(OrchestratorModel):
     version: int
     implementation_task_id: UUID
     implementation_task_status: TaskStatus
+    message: str
+
+
+class ApproveDeliveryInput(OrchestratorModel):
+    run_id: UUID
+    expected_version: int = Field(ge=1)
+    commit_message: str = Field(min_length=1, max_length=100)
+    notes: str | None = Field(default=None, max_length=4_000)
+
+    @field_validator("commit_message")
+    @classmethod
+    def validate_commit_message(cls, value: str) -> str:
+        normalized = value.strip()
+        if not CONVENTIONAL_COMMIT_PATTERN.fullmatch(normalized):
+            raise ValueError(
+                "commit_message must follow Conventional Commits using one of "
+                "feat, fix, refactor, test, docs, chore, or ci"
+            )
+        return normalized
+
+
+class ApproveDeliveryOutput(OrchestratorModel):
+    run_id: UUID
+    status: RunStatus
+    version: int
+    delivery_task_id: UUID
+    delivery_task_status: TaskStatus
     message: str
 
 

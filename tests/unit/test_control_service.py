@@ -9,8 +9,13 @@ from uuid import UUID, uuid4
 import pytest
 
 from orchestrator.control_service import RunControlService
-from orchestrator.mcp_schemas import ApprovePlanInput, CancelRunInput, CreateRunInput
-from orchestrator.phase4_store import Phase4Store
+from orchestrator.mcp_schemas import (
+    ApproveDeliveryInput,
+    ApprovePlanInput,
+    CancelRunInput,
+    CreateRunInput,
+)
+from orchestrator.phase5_store import Phase5Store
 from orchestrator.schemas import (
     Approval,
     ApprovalType,
@@ -72,6 +77,8 @@ class FakeStore:
         self.run = self.run.model_copy(update={"current_task_id": self.task.id})
         self.received_plan_instruction: str | None = None
         self.approved_worktree_path: Path | None = None
+        self.delivery_worktree_path: Path | None = None
+        self.delivery_commit_message: str | None = None
 
     async def list_repositories(self) -> list[Repository]:
         return [self.repository]
@@ -156,6 +163,51 @@ class FakeStore:
         )
         return approved_run, implementation, approval
 
+    async def approve_delivery_and_queue_task(
+        self,
+        run_id: UUID,
+        *,
+        expected_version: int,
+        commit_message: str,
+        notes: str | None,
+        max_attempts: int,
+        worktree_path: Path,
+    ) -> tuple[Run, Task, Approval]:
+        assert run_id == self.run.id
+        assert expected_version == self.run.version
+        assert notes == "ship it"
+        assert max_attempts == 2
+        self.delivery_worktree_path = worktree_path
+        self.delivery_commit_message = commit_message
+        now = datetime.now(UTC)
+        delivery = self.task.model_copy(
+            update={
+                "id": uuid4(),
+                "kind": TaskKind.DELIVER,
+                "instruction": commit_message,
+                "status": TaskStatus.QUEUED,
+                "worktree_path": worktree_path,
+                "priority": 70,
+            }
+        )
+        delivering_run = self.run.model_copy(
+            update={
+                "status": RunStatus.DELIVERING,
+                "version": self.run.version + 1,
+                "current_task_id": delivery.id,
+            }
+        )
+        approval = Approval(
+            id=uuid4(),
+            run_id=run_id,
+            type=ApprovalType.DELIVERY,
+            approved=True,
+            notes=notes,
+            expected_version=expected_version,
+            created_at=now,
+        )
+        return delivering_run, delivery, approval
+
     async def cancel_run(
         self,
         run_id: UUID,
@@ -178,7 +230,7 @@ def make_service(fake: FakeStore, *, runtime_dir: Path) -> RunControlService:
         database_url="postgresql+asyncpg://u:p@localhost/test",
         runtime_dir=runtime_dir,
     )
-    return RunControlService(cast(Phase4Store, fake), settings)
+    return RunControlService(cast(Phase5Store, fake), settings)
 
 
 @pytest.mark.asyncio
@@ -215,6 +267,28 @@ async def test_approve_plan_queues_implementation_in_runtime_worktree(
     assert output.status is RunStatus.EXECUTING
     assert output.implementation_task_status is TaskStatus.QUEUED
     assert fake.approved_worktree_path == tmp_path.resolve() / "worktrees" / str(
+        fake.run.id
+    )
+
+
+@pytest.mark.asyncio
+async def test_approve_delivery_queues_local_commit_task(tmp_path: Path) -> None:
+    fake = FakeStore()
+    fake.run = fake.run.model_copy(
+        update={"status": RunStatus.AWAITING_DELIVERY_APPROVAL}
+    )
+    output = await make_service(fake, runtime_dir=tmp_path).approve_delivery(
+        ApproveDeliveryInput(
+            run_id=fake.run.id,
+            expected_version=fake.run.version,
+            commit_message="feat: add quote lookup",
+            notes="ship it",
+        )
+    )
+    assert output.status is RunStatus.DELIVERING
+    assert output.delivery_task_status is TaskStatus.QUEUED
+    assert fake.delivery_commit_message == "feat: add quote lookup"
+    assert fake.delivery_worktree_path == tmp_path.resolve() / "worktrees" / str(
         fake.run.id
     )
 

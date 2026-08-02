@@ -10,8 +10,9 @@ from uuid import UUID
 from .artifacts import ArtifactWriter
 from .codex_client import CodexClient, CodexRunner, FakeCodexClient
 from .context_builder import build_task_prompt
+from .errors import NoChangesToCommitError
 from .model_router import choose_model
-from .phase4_store import Phase4Store
+from .phase5_store import Phase5Store
 from .schemas import ArtifactKind, Repository, Run, Task, TaskKind
 from .settings import Settings
 from .verification import VerificationRunner
@@ -24,7 +25,7 @@ ClientFactory = Callable[[Task, Run], CodexRunner]
 class CodexWorker:
     def __init__(
         self,
-        store: Phase4Store,
+        store: Phase5Store,
         settings: Settings,
         *,
         worktrees: GitWorktreeManager | None = None,
@@ -53,6 +54,8 @@ class CodexWorker:
             repository = await self.store.get_repository(run.repository_id)
             if task.kind is TaskKind.REVIEW:
                 await self._process_review(task, run, repository)
+            elif task.kind is TaskKind.DELIVER:
+                await self._process_delivery(task, run, repository)
             else:
                 await self._process_codex_task(task, run, repository)
         except asyncio.CancelledError:
@@ -151,6 +154,94 @@ class CodexWorker:
             fix_instruction=self._build_fix_instruction(summary),
             max_fix_cycles=self.settings.max_fix_cycles,
             fix_max_attempts=self.settings.max_attempts_per_task,
+        )
+
+    async def _process_delivery(
+        self,
+        task: Task,
+        run: Run,
+        repository: Repository,
+    ) -> None:
+        if task.worktree_path is None:
+            raise ValueError("delivery task has no worktree path")
+        workspace_info = await self.worktrees.ensure(
+            repository=repository,
+            run_id=run.id,
+            path=task.worktree_path,
+        )
+        snapshot_before = await self.worktrees.snapshot(workspace_info.path)
+        verification = await self.verifier.run(
+            cwd=workspace_info.path,
+            configured_commands=repository.verification_config,
+        )
+        verification_summary = verification.summary()
+        await self._record_artifact(
+            run_id=run.id,
+            task_id=task.id,
+            kind=ArtifactKind.TEST_RESULT,
+            filename="delivery-verification.txt",
+            content=verification_summary,
+        )
+        if not verification.success:
+            raise RuntimeError("delivery verification failed")
+        snapshot_after = await self.worktrees.snapshot(workspace_info.path)
+        if snapshot_after != snapshot_before:
+            raise RuntimeError("verification commands modified the delivery worktree")
+
+        try:
+            commit = await self.worktrees.commit_verified_changes(
+                workspace_info.path,
+                message=task.instruction,
+                run_id=run.id,
+            )
+        except NoChangesToCommitError:
+            if self.settings.codex_mode != "fake":
+                raise
+            receipt = (
+                "commit_sha=none\n"
+                f"branch={workspace_info.branch}\n"
+                "noop=true\n"
+                "pushed=false\n"
+                "merged=false\n"
+            )
+            await self._record_artifact(
+                run_id=run.id,
+                task_id=task.id,
+                kind=ArtifactKind.DELIVERY_RECEIPT,
+                filename="delivery-receipt.txt",
+                content=receipt,
+            )
+            await self.store.complete_delivery_task(
+                task.id,
+                commit_sha=None,
+                changed_files=[],
+                commands_run=verification.commands_run,
+            )
+            return
+
+        receipt = (
+            f"commit_sha={commit.sha}\n"
+            f"branch={commit.branch}\n"
+            f"reused={str(commit.reused).lower()}\n"
+            "noop=false\n"
+            "pushed=false\n"
+            "merged=false\n"
+            "changed_files=\n"
+            + "\n".join(f"- {item}" for item in commit.changed_files)
+            + "\n"
+        )
+        await self._record_artifact(
+            run_id=run.id,
+            task_id=task.id,
+            kind=ArtifactKind.DELIVERY_RECEIPT,
+            filename="delivery-receipt.txt",
+            content=receipt,
+        )
+        await self.store.complete_delivery_task(
+            task.id,
+            commit_sha=commit.sha,
+            changed_files=commit.changed_files,
+            commands_run=verification.commands_run,
         )
 
     async def _workspace_for(

@@ -37,19 +37,24 @@ async def test_tools_publish_structured_output_and_annotations() -> None:
         "list_repositories",
         "create_run",
         "approve_plan",
+        "approve_delivery",
         "get_run",
         "cancel_run",
     }
     list_annotations = tools["list_repositories"].annotations
-    approve_annotations = tools["approve_plan"].annotations
+    plan_annotations = tools["approve_plan"].annotations
+    delivery_annotations = tools["approve_delivery"].annotations
     cancel_annotations = tools["cancel_run"].annotations
     assert list_annotations is not None
-    assert approve_annotations is not None
+    assert plan_annotations is not None
+    assert delivery_annotations is not None
     assert cancel_annotations is not None
     assert list_annotations.readOnlyHint is True
-    assert approve_annotations.destructiveHint is True
+    assert plan_annotations.destructiveHint is True
+    assert delivery_annotations.destructiveHint is True
     assert cancel_annotations.destructiveHint is True
     assert tools["create_run"].outputSchema is not None
+    assert tools["approve_delivery"].outputSchema is not None
 
     result = await mcp.call_tool("list_repositories", {})
     assert isinstance(result, tuple)

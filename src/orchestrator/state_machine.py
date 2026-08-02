@@ -33,7 +33,7 @@ RUN_TRANSITIONS: Mapping[RunStatus, frozenset[RunStatus]] = {
         {
             RunStatus.EXECUTING,
             RunStatus.AWAITING_REVISION,
-            RunStatus.COMPLETED,
+            RunStatus.AWAITING_DELIVERY_APPROVAL,
             RunStatus.FAILED,
             RunStatus.CANCELED,
         }
@@ -44,6 +44,12 @@ RUN_TRANSITIONS: Mapping[RunStatus, frozenset[RunStatus]] = {
             RunStatus.FAILED,
             RunStatus.CANCELED,
         }
+    ),
+    RunStatus.AWAITING_DELIVERY_APPROVAL: frozenset(
+        {RunStatus.DELIVERING, RunStatus.CANCELED}
+    ),
+    RunStatus.DELIVERING: frozenset(
+        {RunStatus.COMPLETED, RunStatus.FAILED, RunStatus.CANCELED}
     ),
     RunStatus.COMPLETED: frozenset(),
     RunStatus.FAILED: frozenset(),

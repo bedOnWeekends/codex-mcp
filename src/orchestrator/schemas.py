@@ -17,6 +17,8 @@ class RunStatus(StrEnum):
     EXECUTING = "executing"
     VERIFYING = "verifying"
     AWAITING_REVISION = "awaiting_revision"
+    AWAITING_DELIVERY_APPROVAL = "awaiting_delivery_approval"
+    DELIVERING = "delivering"
     COMPLETED = "completed"
     FAILED = "failed"
     CANCELED = "canceled"
@@ -44,6 +46,7 @@ class TaskKind(StrEnum):
     IMPLEMENT = "implement"
     FIX = "fix"
     REVIEW = "review"
+    DELIVER = "deliver"
 
 
 class ModelTier(StrEnum):
@@ -54,6 +57,7 @@ class ModelTier(StrEnum):
 
 class ApprovalType(StrEnum):
     PLAN = "plan"
+    DELIVERY = "delivery"
     MERGE = "merge"
 
 
@@ -64,6 +68,7 @@ class ArtifactKind(StrEnum):
     STDERR = "stderr"
     TEST_RESULT = "test_result"
     WORKER_RESULT = "worker_result"
+    DELIVERY_RECEIPT = "delivery_receipt"
     OTHER = "other"
 
 
