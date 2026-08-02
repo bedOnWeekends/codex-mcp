@@ -5,7 +5,7 @@ import logging
 
 from .codex_worker import CodexWorker
 from .database import create_database
-from .phase4_store import Phase4Store
+from .phase5_store import Phase5Store
 from .settings import get_settings
 
 logger = logging.getLogger(__name__)
@@ -27,7 +27,7 @@ async def worker_loop() -> None:
     )
     settings.ensure_runtime_directories()
     database = create_database(settings)
-    store = Phase4Store(database.session_factory)
+    store = Phase5Store(database.session_factory)
     workers = [
         CodexWorker(store, settings) for _ in range(settings.max_parallel_workers)
     ]
