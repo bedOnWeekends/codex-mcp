@@ -10,7 +10,11 @@ from uuid import UUID
 from .artifacts import ArtifactWriter
 from .codex_client import CodexClient, CodexRunResult, CodexRunner, FakeCodexClient
 from .context_builder import build_task_prompt
-from .costing import estimate_usage_cost, projected_call_cost
+from .costing import (
+    estimate_usage_cost,
+    projected_call_cost,
+    projected_call_tokens,
+)
 from .errors import NoChangesToCommitError
 from .github_publisher import (
     Publisher,
@@ -24,6 +28,7 @@ from .multi_agent import (
     build_supervisor_prompt,
     enforce_adaptive_policy,
     fake_agent_plan,
+    fit_plan_to_budget,
     parse_agent_handoff,
     parse_agent_plan,
     validate_agent_changes,
@@ -140,13 +145,26 @@ class CodexWorker:
             plan,
             run,
             confidence_threshold=self.settings.scout_review_confidence_threshold,
+            max_agents=self.settings.max_agents_per_run,
+        )
+        usage_cost = self._usage_cost(profile, result)
+        used_tokens = (
+            await self.store.total_tokens_for_run(run.id)
+            + result.input_tokens
+            + result.output_tokens
+        )
+        plan = fit_plan_to_budget(
+            plan,
+            run,
+            self.settings,
+            used_tokens=used_tokens,
+            spent_cost_usd=run.spent_cost_usd + usage_cost,
         )
         if len(plan.assignments) > self.settings.max_agents_per_run:
             raise ValueError(
                 "supervisor produced more assignments than max_agents_per_run"
             )
 
-        usage_cost = self._usage_cost(profile, result)
         plan_json = plan.model_dump_json(indent=2)
         await self._record_artifact(
             run_id=run.id,
@@ -591,20 +609,22 @@ class CodexWorker:
         if self.settings.codex_mode != "live":
             return
         used_tokens = await self.store.total_tokens_for_run(run.id)
-        if used_tokens >= self.settings.max_tokens_per_run:
+        required_tokens = projected_call_tokens(self.settings, profile.tier)
+        if used_tokens + required_tokens > self.settings.max_tokens_per_run:
             raise RuntimeError(
-                f"run token budget exhausted: {used_tokens} >= "
+                f"insufficient run token budget for {profile.model}: used "
+                f"{used_tokens}, projected {required_tokens}, limit "
                 f"{self.settings.max_tokens_per_run}"
             )
-        required = (
+        required_cost = (
             projected_call_cost(self.settings, profile.tier)
             + self.settings.budget_reserve_usd
         )
         remaining = run.max_cost_usd - run.spent_cost_usd
-        if remaining < required:
+        if remaining < required_cost:
             raise RuntimeError(
                 f"insufficient run budget for {profile.model}: "
-                f"remaining {remaining}, required reserve {required}"
+                f"remaining {remaining}, required reserve {required_cost}"
             )
 
     def _usage_cost(
