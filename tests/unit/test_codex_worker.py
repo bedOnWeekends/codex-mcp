@@ -206,7 +206,7 @@ async def test_delivery_reverifies_and_creates_local_commit(tmp_path: Path) -> N
         path=task.worktree_path,
         branch="orchestrator/run-test",
     )
-    worktrees.diff.side_effect = ["verified patch", "verified patch"]
+    worktrees.snapshot.side_effect = ["snapshot", "snapshot"]
     worktrees.commit_verified_changes.return_value = DeliveryCommit(
         sha="a" * 40,
         branch="orchestrator/run-test",
