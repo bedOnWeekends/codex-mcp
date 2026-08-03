@@ -26,9 +26,11 @@ def test_auto_pr_accepts_normal_risk_and_normalizes_constraints() -> None:
 
 def test_auto_pr_requires_acceptance_criteria_field() -> None:
     with pytest.raises(ValueError, match="acceptance_criteria"):
-        StartAutomatedRunInput(
-            repository="toss-trader",
-            goal="Add validation.",
+        StartAutomatedRunInput.model_validate(
+            {
+                "repository": "toss-trader",
+                "goal": "Add validation.",
+            }
         )
 
 
