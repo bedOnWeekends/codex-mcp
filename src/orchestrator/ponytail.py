@@ -15,6 +15,11 @@ _IMPLEMENTATION_POLICY = """Ponytail full policy:
 - Never simplify away trust-boundary validation, data-loss prevention, security,
   accessibility, hardware calibration, an explicit requirement, or the smallest
   runnable check needed for non-trivial logic.
+- Commit creation, integration, final deterministic verification, branch push, and Draft
+  PR publication are downstream orchestrator responsibilities. Do not perform those
+  operations and do not report their absence as an unresolved risk or unmet acceptance
+  criterion. Evaluate blocking risks only within this assignment's owned paths and
+  responsibilities.
 - Stop when the assignment is satisfied. Do not spend tokens explaining alternatives
   that were not chosen.
 """
@@ -26,6 +31,11 @@ _REVIEW_POLICY = """Ponytail complexity check:
   equivalent implementation.
 - Do not recommend removing validation, security, data-loss handling, accessibility,
   hardware calibration, explicit requirements, or the smallest useful regression check.
+- Commit creation, integration, final deterministic verification, branch push, and Draft
+  PR publication are downstream orchestrator responsibilities. Do not perform those
+  operations and do not report their absence as a review finding, unresolved risk, or
+  unmet acceptance criterion. Review only the integrated implementation and the
+  assignment's semantic contract.
 - If there is nothing material to remove, add no complexity finding.
 """
 

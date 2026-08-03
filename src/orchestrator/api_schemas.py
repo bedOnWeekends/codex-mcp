@@ -27,7 +27,7 @@ class StartAutomatedRunInput(OrchestratorModel):
     repository: str = Field(min_length=1, max_length=120)
     goal: str = Field(min_length=1, max_length=20_000)
     constraints: list[str] = Field(default_factory=list, max_length=50)
-    acceptance_criteria: list[str] = Field(default_factory=list, max_length=100)
+    acceptance_criteria: list[str] = Field(min_length=1, max_length=100)
     max_cost_usd: Decimal = Field(default=Decimal("3.00"), gt=0, le=100)
     risk_level: RiskLevel = RiskLevel.NORMAL
     execution_mode: Literal[ApiExecutionMode.AUTO_PR] = ApiExecutionMode.AUTO_PR
@@ -68,6 +68,10 @@ class StartAutomatedRunInput(OrchestratorModel):
                 raise ValueError("acceptance criteria must be at most 2000 characters")
             normalized.append(item)
             seen.add(item)
+        if not normalized:
+            raise ValueError(
+                "auto_pr requires at least one explicit acceptance criterion"
+            )
         return normalized
 
     @field_validator("commit_message", "pull_request_title")
