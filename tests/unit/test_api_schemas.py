@@ -1,7 +1,7 @@
 from __future__ import annotations
 
+import pydantic
 import pytest
-from pydantic import ValidationError
 
 from orchestrator.api_schemas import StartAutomatedRunInput
 from orchestrator.schemas import RiskLevel
@@ -29,7 +29,7 @@ def test_auto_pr_accepts_normal_risk_and_normalizes_constraints() -> None:
 
 
 def test_auto_pr_requires_acceptance_criteria_field() -> None:
-    with pytest.raises(ValidationError, match="acceptance_criteria"):
+    with pytest.raises(pydantic.ValidationError, match="acceptance_criteria"):
         StartAutomatedRunInput(
             repository="toss-trader",
             goal="Add validation.",
@@ -37,7 +37,7 @@ def test_auto_pr_requires_acceptance_criteria_field() -> None:
 
 
 def test_auto_pr_rejects_blank_acceptance_criteria() -> None:
-    with pytest.raises(ValidationError, match="explicit acceptance criterion"):
+    with pytest.raises(pydantic.ValidationError, match="explicit acceptance criterion"):
         StartAutomatedRunInput(
             repository="toss-trader",
             goal="Add validation.",
@@ -54,7 +54,7 @@ def test_auto_pr_openapi_marks_acceptance_criteria_required() -> None:
 
 @pytest.mark.parametrize("risk_level", [RiskLevel.HIGH, RiskLevel.CRITICAL])
 def test_auto_pr_rejects_high_risk_runs(risk_level: RiskLevel) -> None:
-    with pytest.raises(ValidationError, match="only low or normal"):
+    with pytest.raises(pydantic.ValidationError, match="only low or normal"):
         StartAutomatedRunInput(
             repository="toss-trader",
             goal="Change production infrastructure.",
@@ -64,7 +64,7 @@ def test_auto_pr_rejects_high_risk_runs(risk_level: RiskLevel) -> None:
 
 
 def test_auto_pr_requires_conventional_commit_titles() -> None:
-    with pytest.raises(ValidationError, match="Conventional Commits"):
+    with pytest.raises(pydantic.ValidationError, match="Conventional Commits"):
         StartAutomatedRunInput(
             repository="toss-trader",
             goal="Add validation.",
