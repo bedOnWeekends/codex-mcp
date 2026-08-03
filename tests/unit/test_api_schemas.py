@@ -6,9 +6,6 @@ from orchestrator.api_schemas import StartAutomatedRunInput
 from orchestrator.schemas import RiskLevel
 
 
-ACCEPTANCE_CRITERIA = ["The requested change satisfies the explicit contract."]
-
-
 def test_auto_pr_accepts_normal_risk_and_normalizes_constraints() -> None:
     request = StartAutomatedRunInput(
         repository="toss-trader",
@@ -57,7 +54,9 @@ def test_auto_pr_rejects_high_risk_runs(risk_level: RiskLevel) -> None:
         StartAutomatedRunInput(
             repository="toss-trader",
             goal="Change production infrastructure.",
-            acceptance_criteria=ACCEPTANCE_CRITERIA,
+            acceptance_criteria=[
+                "The requested change satisfies the explicit contract."
+            ],
             risk_level=risk_level,
         )
 
@@ -67,6 +66,8 @@ def test_auto_pr_requires_conventional_commit_titles() -> None:
         StartAutomatedRunInput(
             repository="toss-trader",
             goal="Add validation.",
-            acceptance_criteria=ACCEPTANCE_CRITERIA,
+            acceptance_criteria=[
+                "The requested change satisfies the explicit contract."
+            ],
             commit_message="add validation",
         )
