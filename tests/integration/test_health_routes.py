@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import pytest
+from pydantic import SecretStr
 
 pytest.importorskip("mcp")
 
@@ -24,3 +25,22 @@ def test_liveness_route_does_not_require_database_connection(tmp_path) -> None:
 
     assert response.status_code == 200
     assert response.json()["status"] == "ok"
+
+
+@pytest.mark.mcp
+def test_openapi_declares_production_server(tmp_path) -> None:
+    settings = Settings(
+        environment="test",
+        database_url="postgresql+asyncpg://u:p@127.0.0.1:1/unavailable",
+        runtime_dir=tmp_path / "runtime",
+        api_enabled=True,
+        api_key=SecretStr("x" * 32),
+    )
+    application = build_application(settings)
+
+    assert application.asgi_app.openapi()["servers"] == [
+        {
+            "url": "https://codex.bedonweekends.com",
+            "description": "Codex Orchestrator production server",
+        }
+    ]
