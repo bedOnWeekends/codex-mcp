@@ -244,9 +244,10 @@ def build_agent_prompt(
             "implementation against the original goal, constraints, and acceptance "
             "criteria; those are authoritative when the approved plan conflicts. Audit "
             "exact numbers, formulas, option sets, forbidden substitutions, changed-file "
-            "scope, tests, correctness, and safety. Put every actionable contract "
-            "mismatch in the risks array. An empty risks array is an explicit approval. "
-            "Do not report style-only commentary."
+            "scope, tests, correctness, and safety. Report concrete correctness or "
+            "safety defects and put every actionable contract mismatch in the risks "
+            "array. An empty risks array is an explicit approval. Do not report "
+            "style-only commentary."
         )
         policy = review_policy()
     prompt = (
