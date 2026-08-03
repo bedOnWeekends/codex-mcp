@@ -3,6 +3,7 @@ from __future__ import annotations
 from decimal import Decimal
 from pathlib import PurePosixPath
 
+from .contracts import requires_semantic_review
 from .costing import projected_call_cost, projected_call_tokens
 from .ponytail import append_policy, implementation_policy, review_policy
 from .schemas import (
@@ -26,12 +27,16 @@ def parse_agent_plan(text: str) -> AgentPlan:
 
 def parse_agent_handoff(text: str) -> AgentHandoff:
     try:
-        return AgentHandoff.model_validate_json(_extract_json_object(text))
+        handoff = AgentHandoff.model_validate_json(_extract_json_object(text))
     except ValueError:
         normalized = " ".join(text.strip().split())
-        return AgentHandoff(
+        handoff = AgentHandoff(
             summary=(normalized or "Agent completed without a summary.")[:800]
         )
+    if handoff.risks:
+        detail = "; ".join(handoff.risks)
+        raise ValueError(f"agent reported unresolved blocking risks: {detail}")
+    return handoff
 
 
 def fake_agent_plan() -> AgentPlan:
@@ -71,8 +76,10 @@ def enforce_adaptive_policy(
     implementers = [
         item for item in plan.assignments if item.role is AgentRole.IMPLEMENTER
     ]
+    semantic_required = requires_semantic_review(run.constraints)
     desired_reviewer = (
-        run.risk_level in {RiskLevel.HIGH, RiskLevel.CRITICAL}
+        semantic_required
+        or run.risk_level in {RiskLevel.HIGH, RiskLevel.CRITICAL}
         or plan.confidence < confidence_threshold
         or (plan.mode is ExecutionMode.PARALLEL and len(implementers) >= 3)
     )
@@ -94,6 +101,8 @@ def enforce_adaptive_policy(
         suffix = (
             f" Deterministic policy set LLM review to {str(desired_reviewer).lower()}."
         )
+        if semantic_required:
+            suffix += " Authenticated auto-PR execution requires semantic review."
         if collapsed_for_review:
             suffix += " Parallel scopes were combined to preserve the Sol review slot."
         rationale = f"{rationale}{suffix}"[:600]
@@ -183,6 +192,12 @@ def build_supervisor_prompt(
     max_agents: int,
 ) -> str:
     constraints = "; ".join(run.constraints) or "none"
+    semantic_requirement = (
+        "This run requires an independent semantic reviewer; reserve its assignment "
+        "slot and do not trade it away for implementation fan-out. "
+        if requires_semantic_review(run.constraints)
+        else ""
+    )
     return (
         "Act as a low-cost repository scout and execution router. Inspect only enough "
         "code to choose the cheapest reliable implementation shape; use at most four "
@@ -193,11 +208,11 @@ def build_supervisor_prompt(
         "Do not create a separate explorer. Set confidence from 0 to 1. The harness "
         "decides whether an LLM reviewer is retained. Implementers must have no "
         "dependencies and must own precise repository-relative path prefixes. Keep "
-        f"the total assignments at or below {max_agents}.\n\n"
+        f"the total assignments at or below {max_agents}. {semantic_requirement}\n\n"
         f"Repository: {repository.name}\n"
         f"Risk: {run.risk_level.value}\n"
         f"Goal: {run.goal}\n"
-        f"Constraints: {constraints}\n"
+        f"Constraints and acceptance criteria: {constraints}\n"
         f"Approved plan: {run.plan or 'none'}"
     )
 
@@ -211,29 +226,43 @@ def build_agent_prompt(
 ) -> str:
     dependencies = "\n".join(dependency_context) or "none"
     ownership = ", ".join(assignment.owned_paths) or "read-only"
+    constraints = "\n".join(f"- {item}" for item in run.constraints) or "- None"
     if assignment.role is AgentRole.IMPLEMENTER:
         rules = (
             "Edit only owned paths. Make the smallest complete patch, run focused "
-            "checks when useful, and stop once the assignment is satisfied. Do not "
-            "commit, merge, push, deploy, or access credentials."
+            "checks when useful, and stop once the assignment is satisfied. Preserve "
+            "every exact numeric value, formula, enumerated option, and explicit "
+            "prohibition from the original goal and acceptance criteria. The risks "
+            "array is a blocking channel: leave it empty only when no unresolved "
+            "contract defect remains. Do not commit, merge, push, deploy, or access "
+            "credentials."
         )
         policy = implementation_policy()
     else:
         rules = (
-            "Review only. Do not modify files. Report concrete correctness or safety "
-            "defects; omit style-only commentary."
+            "Review only and do not modify files. Independently compare the combined "
+            "implementation against the original goal, constraints, and acceptance "
+            "criteria; those are authoritative when the approved plan conflicts. Audit "
+            "exact numbers, formulas, option sets, forbidden substitutions, changed-file "
+            "scope, tests, correctness, and safety. Report concrete correctness or "
+            "safety defects and put every actionable contract mismatch in the risks "
+            "array. An empty risks array is an explicit approval. Do not report "
+            "style-only commentary."
         )
         policy = review_policy()
     prompt = (
         f"Role: {assignment.role.value}\n"
         f"Repository: {repository.name}\n"
         f"Goal: {run.goal}\n"
+        f"Constraints and acceptance criteria:\n{constraints}\n"
+        f"Approved plan (non-authoritative if it conflicts with the request):\n"
+        f"{run.plan or 'none'}\n"
         f"Owned paths: {ownership}\n"
         f"Assignment: {assignment.instruction}\n"
         f"Dependency handoffs:\n{dependencies}\n"
         f"Rules: {rules}\n"
         "Return only JSON matching the provided handoff schema. Keep the summary under "
-        "800 characters and list only material risks and checks."
+        "800 characters and list only material blocking risks and focused checks."
     )
     return append_policy(prompt, policy)
 
@@ -321,9 +350,11 @@ def _reviewer_for(implementers: list[AgentSpec]) -> AgentSpec:
         key=_reviewer_key({item.key for item in implementers}),
         role=AgentRole.REVIEWER,
         instruction=(
-            "Review the combined implementer results for correctness, contract "
-            "mismatches, unsafe behavior, and missing tests. Report only defects that "
-            "require action."
+            "Audit the combined implementer results against the original goal, every "
+            "constraint, and every acceptance criterion. Treat exact values, formulas, "
+            "enumerated choices, and forbidden substitutions as contract terms. Put "
+            "each unresolved actionable mismatch in risks; leave risks empty only when "
+            "the change is semantically approved."
         ),
         depends_on=[item.key for item in implementers],
     )

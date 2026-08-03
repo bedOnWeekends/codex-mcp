@@ -6,10 +6,13 @@ from uuid import uuid4
 import pytest
 from pydantic import ValidationError
 
+from orchestrator.contracts import SEMANTIC_REVIEW_REQUIRED
 from orchestrator.multi_agent import (
+    build_agent_prompt,
     enforce_adaptive_policy,
     fake_agent_plan,
     fit_plan_to_budget,
+    parse_agent_handoff,
     parse_agent_plan,
     validate_agent_changes,
 )
@@ -21,6 +24,7 @@ from orchestrator.schemas import (
     AgentSpec,
     ExecutionMode,
     ModelTier,
+    Repository,
     RiskLevel,
     Run,
     RunStatus,
@@ -138,6 +142,36 @@ def test_low_confidence_plan_gets_one_reviewer() -> None:
     ]
 
 
+def test_auto_pr_contract_forces_reviewer_at_high_confidence() -> None:
+    plan = AgentPlan(
+        mode=ExecutionMode.SINGLE,
+        confidence=0.99,
+        rationale="The file scope is localized.",
+        assignments=[
+            AgentSpec(
+                key="implement-docs",
+                role=AgentRole.IMPLEMENTER,
+                instruction="Write the requested strategy contract.",
+                owned_paths=["docs"],
+            )
+        ],
+    )
+    routed = enforce_adaptive_policy(
+        plan,
+        make_run(
+            RiskLevel.LOW,
+            constraints=[SEMANTIC_REVIEW_REQUIRED],
+        ),
+        confidence_threshold=0.72,
+    )
+    assert routed.requires_llm_review is True
+    assert [item.role for item in routed.topological_order()] == [
+        AgentRole.IMPLEMENTER,
+        AgentRole.REVIEWER,
+    ]
+    assert "semantic review" in routed.rationale.lower()
+
+
 def test_high_risk_parallel_plan_collapses_to_preserve_reviewer_slot() -> None:
     routed = enforce_adaptive_policy(
         parallel_plan(),
@@ -235,6 +269,52 @@ def test_parse_agent_plan_accepts_markdown_json_fence() -> None:
     assert parsed == fake_agent_plan()
 
 
+def test_agent_handoff_rejects_unresolved_semantic_contract_risk() -> None:
+    payload = (
+        '{"summary":"Strategy document is incomplete.",'
+        '"risks":["Replaced 1.5R with +1.00% despite the acceptance contract."],'
+        '"tests":[]}'
+    )
+    with pytest.raises(ValueError, match="Replaced 1.5R"):
+        parse_agent_handoff(payload)
+
+
+def test_reviewer_prompt_preserves_exact_request_and_acceptance_criteria(
+    tmp_path: Path,
+) -> None:
+    run = make_run(
+        RiskLevel.NORMAL,
+        goal="Preserve 0.5 / 0.75 / 1.0 x OR Width and 1.5R / 2.0R / 2.5R.",
+        constraints=[
+            SEMANTIC_REVIEW_REQUIRED,
+            "[acceptance] Do not replace R multiples with fixed percentages.",
+        ],
+    ).model_copy(update={"plan": "Use concise documentation."})
+    assignment = make_assignment(tmp_path, role=AgentRole.REVIEWER, owned_paths=[])
+    repository = Repository(
+        id=uuid4(),
+        name="toss-trader",
+        root_path=tmp_path / "repo",
+        default_branch="main",
+        verification_config=[],
+        created_at=datetime.now(UTC),
+        updated_at=datetime.now(UTC),
+    )
+
+    prompt = build_agent_prompt(
+        repository,
+        run,
+        assignment,
+        dependency_context=["implement-docs|implementer|abc|files=docs/strategy.md"],
+    )
+
+    assert "1.5R / 2.0R / 2.5R" in prompt
+    assert "Do not replace R multiples" in prompt
+    assert "authoritative" in prompt
+    assert "exact numbers" in prompt
+    assert "empty risks array is an explicit approval" in prompt.lower()
+
+
 def test_implementer_change_must_stay_inside_owned_paths(tmp_path: Path) -> None:
     assignment = make_assignment(
         tmp_path,
@@ -286,13 +366,18 @@ def make_settings(tmp_path: Path, *, max_tokens: int) -> Settings:
     )
 
 
-def make_run(risk: RiskLevel) -> Run:
+def make_run(
+    risk: RiskLevel,
+    *,
+    goal: str = "Implement a focused change",
+    constraints: list[str] | None = None,
+) -> Run:
     now = datetime.now(UTC)
     return Run(
         id=uuid4(),
         repository_id=uuid4(),
-        goal="Implement a focused change",
-        constraints=[],
+        goal=goal,
+        constraints=constraints or [],
         risk_level=risk,
         max_cost_usd=Decimal("3"),
         status=RunStatus.SUPERVISING,

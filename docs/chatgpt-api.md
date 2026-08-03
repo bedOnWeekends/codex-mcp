@@ -1,9 +1,9 @@
 # ChatGPT auto-PR API
 
 The REST control plane exposes one high-level operation: create a bounded orchestration
-run that advances through plan approval, verified delivery, branch publication, and a
-GitHub **Draft** pull request. It never marks the pull request ready, merges, force
-pushes, deploys, or trades.
+run that advances through plan approval, semantic contract review, deterministic
+verification, branch publication, and a GitHub **Draft** pull request. It never marks
+the pull request ready, merges, force pushes, deploys, or trades.
 
 The API is disabled by default. When it is enabled, the same bearer key also protects
 the `/mcp` endpoint so a Cloudflare Tunnel cannot expose unauthenticated approval tools.
@@ -58,6 +58,11 @@ Content-Type: application/json
     "Do not enable live trading.",
     "Run pytest, Ruff, and Pyright."
   ],
+  "acceptance_criteria": [
+    "Reject every order mode other than fake or paper.",
+    "Preserve the existing python -m toss_trader entry point.",
+    "Add tests for every rejected live-trading path."
+  ],
   "risk_level": "normal",
   "execution_mode": "auto_pr",
   "max_cost_usd": "3.00",
@@ -67,9 +72,27 @@ Content-Type: application/json
 }
 ```
 
+Use `goal` for the overall outcome, `constraints` for operational and safety boundaries,
+and `acceptance_criteria` for independently reviewable completion conditions. Put exact
+numeric values, formulas, required option sets, and forbidden substitutions in
+`acceptance_criteria` instead of relying on a prose summary to preserve them.
+
+Every authenticated `auto_pr` run reserves an independent semantic reviewer. The
+reviewer receives the original goal, constraints, acceptance criteria, approved plan,
+and integrated implementation. The original request remains authoritative when the
+plan conflicts with it. Any unresolved actionable mismatch is a blocking risk: the run
+retries within its configured attempt budget and then fails without delivery or Draft
+PR publication. Deterministic repository verification still runs separately after the
+semantic gate.
+
 Only repositories registered with `orchestrator-admin repository add` can be selected.
 The API accepts only `low` and `normal` risk runs. A repeated idempotency key returns the
 original run when the request body is identical and returns HTTP 409 when it differs.
+Changing acceptance criteria changes the request hash and therefore conflicts with a
+previous use of the same idempotency key.
+
+After updating the server, re-import the generated OpenAPI document into the Custom GPT
+Action so the new `acceptance_criteria` request field is available.
 
 ### Read status
 
@@ -79,7 +102,8 @@ Authorization: Bearer <ORCH_API_KEY>
 ```
 
 The response includes the authoritative run state, tasks, agents, automation status,
-commit, branch, and Draft PR URL when publication completes.
+commit, branch, and Draft PR URL when publication completes. A semantic reviewer defect
+appears in task failure details and prevents a successful publication result.
 
 ### Cancel a run
 
@@ -132,6 +156,8 @@ schema and configure the same bearer key in the Action authentication settings.
 
 - REST callers cannot provide a filesystem path or arbitrary shell command.
 - Repository access is restricted to the administrator-maintained repository registry.
+- Auto-PR runs cannot discard the mandatory semantic reviewer to save cost or tokens.
+- Reviewer-reported blocking defects prevent integration, delivery, and publication.
 - Automatic approval stops on `awaiting_revision`, `failed`, or `canceled` states.
 - Delivery verification still runs before the final local commit.
 - Publication is always a Draft PR and never a merge.
