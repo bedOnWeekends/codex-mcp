@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from decimal import Decimal
 from pathlib import PurePosixPath
 
@@ -22,7 +23,23 @@ from .settings import Settings
 
 
 def parse_agent_plan(text: str) -> AgentPlan:
-    return AgentPlan.model_validate_json(_extract_json_object(text))
+    payload = json.loads(_extract_json_object(text))
+    if not isinstance(payload, dict):
+        raise ValueError("supervisor output must be a JSON object")
+    assignments = payload.get("assignments")
+    if not isinstance(assignments, list):
+        raise ValueError("supervisor output must contain an assignments array")
+
+    implementers: list[object] = []
+    for assignment in assignments:
+        if not isinstance(assignment, dict):
+            raise ValueError("supervisor assignments must be JSON objects")
+        if assignment.get("role") == AgentRole.IMPLEMENTER.value:
+            implementers.append(assignment)
+
+    payload["assignments"] = implementers
+    payload["requires_llm_review"] = False
+    return AgentPlan.model_validate(payload)
 
 
 def parse_agent_handoff(text: str) -> AgentHandoff:
@@ -193,8 +210,9 @@ def build_supervisor_prompt(
 ) -> str:
     constraints = "; ".join(run.constraints) or "none"
     semantic_requirement = (
-        "This run requires an independent semantic reviewer; reserve its assignment "
-        "slot and do not trade it away for implementation fan-out. "
+        "This run requires an independent semantic reviewer. The harness adds that "
+        "reviewer after parsing, so reserve one assignment slot but do not return a "
+        "reviewer assignment. "
         if requires_semantic_review(run.constraints)
         else ""
     )
@@ -205,9 +223,10 @@ def build_supervisor_prompt(
         "output schema.\n\n"
         "Default to single mode with one implementer. Choose parallel mode only when "
         "two or three independently editable, non-overlapping path groups are proven. "
-        "Do not create a separate explorer. Set confidence from 0 to 1. The harness "
-        "decides whether an LLM reviewer is retained. Implementers must have no "
-        "dependencies and must own precise repository-relative path prefixes. Keep "
+        "Return implementer assignments only; never return a reviewer or explorer. Set "
+        "requires_llm_review to false because the harness owns reviewer policy. "
+        "Implementers must have no dependencies and must own precise repository-relative "
+        "path prefixes. Keep "
         f"the total assignments at or below {max_agents}. {semantic_requirement}\n\n"
         f"Repository: {repository.name}\n"
         f"Risk: {run.risk_level.value}\n"
