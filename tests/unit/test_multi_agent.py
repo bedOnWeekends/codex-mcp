@@ -269,6 +269,51 @@ def test_parse_agent_plan_accepts_markdown_json_fence() -> None:
     assert parsed == fake_agent_plan()
 
 
+def test_parse_agent_plan_discards_model_authored_reviewer_ownership() -> None:
+    payload = """
+    {
+      "mode": "single",
+      "confidence": 0.99,
+      "requires_llm_review": true,
+      "rationale": "The document files form one implementation scope.",
+      "assignments": [
+        {
+          "key": "implement-docs",
+          "role": "implementer",
+          "instruction": "Write the strategy contract documents.",
+          "depends_on": [],
+          "owned_paths": ["docs", "README.md"]
+        },
+        {
+          "key": "review-docs",
+          "role": "reviewer",
+          "instruction": "Review the document contract.",
+          "depends_on": ["implement-docs"],
+          "owned_paths": ["docs", "README.md"]
+        }
+      ]
+    }
+    """
+
+    parsed = parse_agent_plan(payload)
+
+    assert parsed.requires_llm_review is False
+    assert [item.key for item in parsed.assignments] == ["implement-docs"]
+    routed = enforce_adaptive_policy(
+        parsed,
+        make_run(
+            RiskLevel.NORMAL,
+            constraints=[SEMANTIC_REVIEW_REQUIRED],
+        ),
+        confidence_threshold=0.72,
+    )
+    reviewer = next(
+        item for item in routed.assignments if item.role is AgentRole.REVIEWER
+    )
+    assert reviewer.owned_paths == []
+    assert reviewer.depends_on == ["implement-docs"]
+
+
 def test_agent_handoff_rejects_unresolved_semantic_contract_risk() -> None:
     payload = (
         '{"summary":"Strategy document is incomplete.",'
