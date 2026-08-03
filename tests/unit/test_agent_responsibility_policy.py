@@ -4,7 +4,7 @@ from orchestrator.ponytail import implementation_policy, review_policy
 
 
 def test_implementation_policy_keeps_publication_out_of_agent_risks() -> None:
-    policy = implementation_policy()
+    policy = " ".join(implementation_policy().split())
 
     assert "downstream orchestrator responsibilities" in policy
     assert "Draft PR publication" in policy
@@ -13,7 +13,7 @@ def test_implementation_policy_keeps_publication_out_of_agent_risks() -> None:
 
 
 def test_review_policy_keeps_publication_out_of_review_findings() -> None:
-    policy = review_policy()
+    policy = " ".join(review_policy().split())
 
     assert "downstream orchestrator responsibilities" in policy
     assert "Draft PR publication" in policy
