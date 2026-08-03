@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.orm import Mapped, mapped_column
 
 from .api_schemas import ApiExecutionMode, AutomationStatus, StartAutomatedRunInput
+from .contracts import auto_pr_run_constraints
 from .db_models import Base, EventModel, RepositoryModel, RunModel, TaskModel
 from .errors import DuplicateEntityError, EntityNotFoundError
 from .schemas import ModelTier, RiskLevel, RunStatus, TaskKind, TaskStatus
@@ -121,11 +122,15 @@ class AutomationStore:
                 if repository is None:
                     raise EntityNotFoundError("repository", request.repository)
 
+                run_constraints = auto_pr_run_constraints(
+                    request.constraints,
+                    request.acceptance_criteria,
+                )
                 run = RunModel(
                     id=uuid4(),
                     repository_id=repository.id,
                     goal=request.goal,
-                    constraints=request.constraints,
+                    constraints=run_constraints,
                     status=RunStatus.CREATED.value,
                     risk_level=request.risk_level.value,
                     max_cost_usd=request.max_cost_usd,
@@ -142,7 +147,7 @@ class AutomationStore:
                     model_tier=self._model_tier(request.risk_level).value,
                     instruction=self._plan_instruction(
                         goal=request.goal,
-                        constraints=request.constraints,
+                        constraints=run_constraints,
                     ),
                     max_attempts=max_attempts,
                     priority=100,
@@ -175,6 +180,10 @@ class AutomationStore:
                                 "initial_task_kind": TaskKind.PLAN.value,
                                 "source": "rest_api",
                                 "execution_mode": ApiExecutionMode.AUTO_PR.value,
+                                "semantic_review_required": True,
+                                "acceptance_criteria_count": len(
+                                    request.acceptance_criteria
+                                ),
                             },
                         ),
                     ]
@@ -312,11 +321,14 @@ class AutomationStore:
         )
         return (
             "Inspect the registered repository in read-only mode and produce an "
-            "implementation plan. Do not modify files.\n\n"
+            "implementation plan. Do not modify files. Treat the original goal, "
+            "constraints, and acceptance criteria as authoritative. Preserve exact "
+            "numeric values, formulas, enumerated options, and prohibited substitutions."
+            "\n\n"
             f"Goal:\n{goal}\n\n"
-            f"Constraints:\n{constraint_lines}\n\n"
+            f"Constraints and acceptance criteria:\n{constraint_lines}\n\n"
             "Return relevant files, current architecture, implementation steps, "
-            "risks, and acceptance criteria."
+            "risks, and explicit coverage of every acceptance criterion."
         )
 
     @staticmethod
