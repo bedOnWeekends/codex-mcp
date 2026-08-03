@@ -15,9 +15,11 @@ from orchestrator.settings import Settings
 class FakeCoordinator:
     def __init__(self) -> None:
         self.keys: list[str] = []
+        self.requests: list[object] = []
 
     async def start_run(self, request: object, *, idempotency_key: str) -> object:
         self.keys.append(idempotency_key)
+        self.requests.append(request)
         return StartAutomatedRunOutput(
             run_id=uuid4(),
             status=RunStatus.PLANNING,
@@ -48,6 +50,10 @@ def request_body() -> dict[str, object]:
     return {
         "repository": "toss-trader",
         "goal": "Add a safe API client.",
+        "acceptance_criteria": [
+            "Preserve every explicitly supplied numeric value.",
+            "Do not enable live trading.",
+        ],
         "commit_message": "feat(api): add safe client",
         "pull_request_title": "feat(api): add safe client",
     }
@@ -82,6 +88,11 @@ def test_api_starts_run_with_authenticated_idempotency_key() -> None:
     assert response.status_code == 202
     assert response.json()["status"] == "planning"
     assert coordinator.keys == ["request-1234"]
+    assert len(coordinator.requests) == 1
+    assert getattr(coordinator.requests[0], "acceptance_criteria") == [
+        "Preserve every explicitly supplied numeric value.",
+        "Do not enable live trading.",
+    ]
 
 
 def test_openapi_exposes_stable_action_operation_id() -> None:
@@ -91,3 +102,5 @@ def test_openapi_exposes_stable_action_operation_id() -> None:
     operation = schema["paths"]["/api/v1/runs"]["post"]
     assert operation["operationId"] == "startOrchestrationRun"
     assert "HTTPBearer" in schema["components"]["securitySchemes"]
+    request_schema = schema["components"]["schemas"]["StartAutomatedRunInput"]
+    assert "acceptance_criteria" in request_schema["properties"]
