@@ -34,6 +34,13 @@ and cancel_run require the latest run version. Workers execute queued work outsi
 MCP server process.
 """.strip()
 
+OPENAPI_SERVERS = [
+    {
+        "url": "https://codex.bedonweekends.com",
+        "description": "Codex Orchestrator production server",
+    }
+]
+
 
 @dataclass(slots=True)
 class OrchestratorApplication:
@@ -123,6 +130,7 @@ def build_application(settings: Settings) -> OrchestratorApplication:
             "Authenticated API for starting bounded auto_pr orchestration runs. "
             "The API may create Draft pull requests but never merges them."
         ),
+        servers=OPENAPI_SERVERS,
         docs_url=(
             f"{settings.api_prefix}/docs"
             if settings.api_enabled and settings.api_docs_enabled
