@@ -6,7 +6,11 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from pydantic import SecretStr
 
-from orchestrator.api_schemas import AutomationStatus, StartAutomatedRunOutput
+from orchestrator.api_schemas import (
+    AutomationStatus,
+    StartAutomatedRunInput,
+    StartAutomatedRunOutput,
+)
 from orchestrator.rest_api import build_api_router
 from orchestrator.schemas import RunStatus
 from orchestrator.settings import Settings
@@ -15,9 +19,14 @@ from orchestrator.settings import Settings
 class FakeCoordinator:
     def __init__(self) -> None:
         self.keys: list[str] = []
-        self.requests: list[object] = []
+        self.requests: list[StartAutomatedRunInput] = []
 
-    async def start_run(self, request: object, *, idempotency_key: str) -> object:
+    async def start_run(
+        self,
+        request: StartAutomatedRunInput,
+        *,
+        idempotency_key: str,
+    ) -> object:
         self.keys.append(idempotency_key)
         self.requests.append(request)
         return StartAutomatedRunOutput(
@@ -89,7 +98,7 @@ def test_api_starts_run_with_authenticated_idempotency_key() -> None:
     assert response.json()["status"] == "planning"
     assert coordinator.keys == ["request-1234"]
     assert len(coordinator.requests) == 1
-    assert getattr(coordinator.requests[0], "acceptance_criteria") == [
+    assert coordinator.requests[0].acceptance_criteria == [
         "Preserve every explicitly supplied numeric value.",
         "Do not enable live trading.",
     ]
